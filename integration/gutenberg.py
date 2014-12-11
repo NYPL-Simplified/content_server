@@ -10,7 +10,6 @@ import shutil
 import tarfile
 from urlparse import urljoin, urlparse
 from StringIO import StringIO
-from bs4 import BeautifulSoup
 
 from sqlalchemy.orm import aliased
 

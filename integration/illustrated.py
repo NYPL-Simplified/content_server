@@ -14,6 +14,7 @@ from ..core.model import (
     Resource,
     get_one,
 )
+from ..core.s3 import S3Uploader
 import subprocess
 import tempfile
 
@@ -217,7 +218,6 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             if gid not in self.illustration_lists:
                 self.illustration_lists[gid] = illustrations
 
-        from integration.s3 import S3Uploader
         self.uploader = S3Uploader()
 
     def apply_size_filter(self, illustrations):
