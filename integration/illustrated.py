@@ -281,7 +281,14 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         pool = get_one(
             self._db, LicensePool, identifier_id=identifier_obj.id)
         to_upload = []
-        for filename in os.listdir(output_directory):
+        if os.path.exists(output_directory):
+            candidates = os.listdir(output_directory)            
+        else:
+            # All the potential images were filtered so the directory
+            # was never created. Skip the upload step altogether.
+            candidates = []
+
+        for filename in candidates:
             if not filename.endswith('.png'):
                 # Random unknown junk which we won't be uploading.
                 continue
