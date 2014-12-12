@@ -28,7 +28,6 @@ class ContentServerAnnotator(Annotator):
         ids = work.all_identifier_ids()
         image_resources = Identifier.resources_for_identifier_ids(
             _db, ids, Resource.IMAGE)
-
         thumbnails = []
         full = []
         for cover in image_resources:
@@ -53,4 +52,5 @@ class ContentServerAnnotator(Annotator):
                 value = dict(term=subject.identifier)
                 if subject.name:
                     value['label'] = subject.name
+                by_scheme[scheme].append(value)
         return by_scheme
