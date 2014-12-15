@@ -5,6 +5,7 @@ requests
 sqlalchemy
 nose
 lxml
+flask
 
 # This is used by core, but only if you import integration.s3 (which we do).
 tinys3
@@ -16,4 +17,4 @@ textblob
 
 # Requirements
 rdflib
-flask
+

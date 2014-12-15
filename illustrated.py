@@ -5,7 +5,7 @@ import os
 import re
 from nose.tools import set_trace
 
-from ..core.model import (
+from core.model import (
     CoverageProvider,
     DataSource,
     Edition,
@@ -14,7 +14,7 @@ from ..core.model import (
     Resource,
     get_one,
 )
-from ..core.s3 import S3Uploader
+from core.s3 import S3Uploader
 import subprocess
 import tempfile
 

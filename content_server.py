@@ -1,3 +1,4 @@
+from nose.tools import set_trace
 import os
 
 from core.model import (
@@ -6,6 +7,7 @@ from core.model import (
     Identifier,
     LicensePool,
     Work,
+    WorkFeed,
 )
 
 from flask import Flask, url_for, redirect, Response
@@ -16,6 +18,7 @@ app.debug = True
 
 from opds import ContentServerAnnotator
 from core.opds import AcquisitionFeed
+import gutenberg
 
 class Conf:
     db = None
@@ -31,10 +34,16 @@ else:
     _db = production_session()
     Conf.initialize(_db)
 
-@app.route('/feed/')
+@app.route('/')
 def feed():
-    works = Conf.db.query(Work).join(Work.primary_edition).join(Edition.primary_identifier).join(Identifier.licensed_through).order_by(LicensePool.availability_time.desc())
+
+    last_seen_id = arg('after', None)
+    languages = languages_for_request()
+
+    works = Conf.db.query(Work).order_by(Work.last_update_time.desc())
     this_url = url_for('feed', _external=True)
+
+
     opds_feed = AcquisitionFeed(Conf.db, "blah", this_url, works,
                                 ContentServerAnnotator)
 

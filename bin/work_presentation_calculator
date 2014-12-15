@@ -5,5 +5,8 @@ import sys
 bin_dir = os.path.split(__file__)[0]
 package_dir = os.path.join(bin_dir, "..", "..")
 sys.path.append(os.path.abspath(package_dir))
+
+force = ('force' in sys.argv)
+
 from content.core.scripts import WorkPresentationScript
-WorkPresentationScript().run()
+WorkPresentationScript(force=force).run()
