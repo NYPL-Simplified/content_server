@@ -10,6 +10,7 @@ from core.model import (
     WorkFeed,
 )
 
+import flask
 from flask import Flask, url_for, redirect, Response
 
 app = Flask(__name__)
@@ -18,7 +19,7 @@ app.debug = True
 
 from opds import ContentServerAnnotator
 from core.opds import AcquisitionFeed
-import gutenberg
+from core.util.flask_util import languages_for_request
 
 class Conf:
     db = None
@@ -37,15 +38,39 @@ else:
 @app.route('/')
 def feed():
 
+    arg = flask.request.args.get
     last_seen_id = arg('after', None)
+    size = arg('size', "100")
+    try:
+        size = int(size)
+    except ValueError:
+        return problem("Invalid size: %s" % size, 400)
     languages = languages_for_request()
 
-    works = Conf.db.query(Work).order_by(Work.last_update_time.desc())
     this_url = url_for('feed', _external=True)
 
+    last_work_seen = None
+    last_id = arg('after', None)
+    if last_id:
+        try:
+            last_id = int(last_id)
+        except ValueError:
+            return problem("Invalid work ID: %s" % last_id, 400)
+        try:
+            last_work_seen = Conf.db.query(Work).filter(Work.id==last_id).one()
+        except NoResultFound:
+            return problem("No such work id: %s" % last_id, 400)
 
-    opds_feed = AcquisitionFeed(Conf.db, "blah", this_url, works,
+    feed = WorkFeed(None, languages, [Work.last_update_time, Work.id], False, WorkFeed.ALL)
+    work_q = feed.page_query(Conf.db, last_work_seen, size)
+    page = work_q.all()
+    opds_feed = AcquisitionFeed(Conf.db, "Open-Access Content", this_url, page,
                                 ContentServerAnnotator)
+    if page and len(page) >= size:
+        after = page[-1].id
+        next_url = url_for(
+            'feed', after=after, size=str(size), _external=True)
+        opds_feed.add_link(rel="next", href=next_url)
 
     feed = unicode(opds_feed)
     return feed

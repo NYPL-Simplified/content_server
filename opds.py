@@ -54,3 +54,12 @@ class ContentServerAnnotator(Annotator):
                     value['label'] = subject.name
                 by_scheme[scheme].append(value)
         return by_scheme
+
+    @classmethod
+    def annotate_work_entry(cls, work, active_license_pool, feed, entry, links):
+        if not active_license_pool.open_access:
+            return
+
+        rel = OPDSFeed.OPEN_ACCESS_REL
+        best_pool, best_link = active_license_pool.best_license_link
+        feed.add_link_to_entry(entry, rel=rel, href=best_link.final_url)
