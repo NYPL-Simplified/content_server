@@ -10,6 +10,10 @@ from core.model import (
     WorkFeed,
 )
 
+from sqlalchemy.orm.exc import (
+    NoResultFound,
+)
+
 import flask
 from flask import Flask, url_for, redirect, Response
 
