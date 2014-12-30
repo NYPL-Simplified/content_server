@@ -256,6 +256,9 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             # All illustrations were filtered out. Nothing to do.
             return True
 
+        # There is at least one cover available for this book.
+        edition.no_known_cover = False
+
         data['illustrations'] = illustrations
         
         # Write the input to a temporary file.

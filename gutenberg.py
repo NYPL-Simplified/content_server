@@ -373,6 +373,7 @@ class GutenbergRDFExtractor(object):
         # with the new Edition. They will serve either as open access
         # downloads or cover images.
         download_links = cls._values(g, (uri, cls.dcterms.hasFormat, None))
+        no_known_cover = True
         for href in download_links:
             for format_uri in cls._values(
                     g, (href, cls.dcterms['format'], None)):
@@ -382,6 +383,7 @@ class GutenbergRDFExtractor(object):
                 if media_type.startswith('image/'):
                     if '.medium.' in href:
                         rel = Resource.IMAGE
+                        no_known_cover = False
                     else:
                         # We don't care about thumbnail images--we
                         # make our own.
@@ -395,6 +397,7 @@ class GutenbergRDFExtractor(object):
                         rel, unicode(href), source, media_type=media_type)
                 identifier.add_resource(
                     Resource.CANONICAL, unicode(uri), source)
+        book.no_known_cover = no_known_cover
 
         book.medium = medium
 
