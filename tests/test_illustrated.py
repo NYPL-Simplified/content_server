@@ -4,7 +4,7 @@ import datetime
 import pkgutil
 import StringIO
 from nose.tools import set_trace, eq_ 
-from ..integration.illustrated import (
+from ..illustrated import (
     GutenbergIllustratedDataProvider,
 )
 

@@ -14,8 +14,19 @@ from core.model import (
     Subject,
 )
 
-
 class ContentServerAnnotator(VerboseAnnotator):
+
+    @classmethod
+    def annotate_work_entry(cls, work, active_license_pool, feed, entry, links):
+        if not active_license_pool.open_access:
+            return
+
+        rel = OPDSFeed.OPEN_ACCESS_REL
+        best_pool, best_link = active_license_pool.best_license_link
+        feed.add_link_to_entry(entry, rel=rel, href=best_link.final_url)
+
+
+class AllCoverLinksAnnotator(ContentServerAnnotator):
 
     @classmethod
     def cover_links(cls, work):
@@ -36,12 +47,3 @@ class ContentServerAnnotator(VerboseAnnotator):
             if cover.scaled_path:
                 thumbnails.append(cover.scaled_path)
         return thumbnails, full
-
-    @classmethod
-    def annotate_work_entry(cls, work, active_license_pool, feed, entry, links):
-        if not active_license_pool.open_access:
-            return
-
-        rel = OPDSFeed.OPEN_ACCESS_REL
-        best_pool, best_link = active_license_pool.best_license_link
-        feed.add_link_to_entry(entry, rel=rel, href=best_link.final_url)

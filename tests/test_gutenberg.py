@@ -15,7 +15,7 @@ from ..core.model import (
     Edition,
     get_one_or_create,
 )
-from ..integration.gutenberg import (
+from ..gutenberg import (
     GutenbergAPI,
     GutenbergRDFExtractor,
 )
