@@ -383,7 +383,11 @@ class GutenbergRDFExtractor(object):
                 if media_type.startswith('image/'):
                     if '.medium.' in href:
                         rel = Resource.IMAGE
-                        no_known_cover = False
+                        # NOTE: We currently never use Gutenberg
+                        # covers (they're usually bad), so if we find
+                        # one of these resources we don't count it as
+                        # a cover.
+                        # no_known_cover = False
                     else:
                         # We don't care about thumbnail images--we
                         # make our own.
