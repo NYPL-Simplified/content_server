@@ -235,6 +235,17 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             large_enough.append(i)
         return large_enough
 
+    def set_presentation_ready(self, edition):
+
+        if not edition.work:
+            set_trace()
+
+        # Calculate (or recalculate) the Work's presentation.
+        edition.work.calculate_presentation()
+
+        # Set the work as presentation ready.
+        edition.work.presentation_ready = True
+
     def process_edition(self, edition):
         data = GutenbergIllustratedDataProvider.data_for_edition(edition)
 
@@ -242,6 +253,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         identifier = identifier_obj.identifier
         if identifier not in self.illustration_lists:
             # No illustrations for this edition. Nothing to do.
+            self.set_presentation_ready(edition)
             return True
 
         data['identifier'] = identifier
@@ -254,6 +266,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
 
         if not illustrations:
             # All illustrations were filtered out. Nothing to do.
+            self.set_presentation_ready(edition)
             return True
 
         # There is at least one cover available for this book.
@@ -312,6 +325,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             to_upload.append((path, resource.final_url))
 
         self.uploader.upload_resources(to_upload)
+        self.set_presentation_ready(edition)
         return True
 
     def args_for(self, input_path):

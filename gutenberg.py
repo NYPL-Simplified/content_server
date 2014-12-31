@@ -193,7 +193,11 @@ class GutenbergAPI(object):
                 if book:
                     # Ensure that an open-access LicensePool exists for this book.
                     license, new = self.pg_license_for(self._db, book)
+                
+                    license.calculate_work()
+
                     yield (book, license)
+
 
     @classmethod
     def pg_license_for(cls, _db, edition):
@@ -278,9 +282,11 @@ class GutenbergRDFExtractor(object):
             uri, ignore, title = title_triples[0]
             print " Parsing book %s" % title
             book, new = cls.parse_book(_db, g, uri, title)
+
         else:
             book = None
             new = False
+
         return book, new
 
     @classmethod
@@ -424,8 +430,8 @@ class GutenbergMonitor(Monitor):
 
     def run(self, subset=None):
         added_books = 0
-        for work, license_pool in self.source.create_missing_books(subset):
-            # Log a circulation event for this work.
+        for edition, license_pool in self.source.create_missing_books(subset):
+            # Log a circulation event for this title.
             event = get_one_or_create(
                 self._db, CirculationEvent,
                 type=CirculationEvent.TITLE_ADD,
@@ -434,4 +440,6 @@ class GutenbergMonitor(Monitor):
                     start=license_pool.last_checked
                 )
             )
+
             self._db.commit()
+
