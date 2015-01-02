@@ -9,6 +9,7 @@ from core.model import (
     Work,
     WorkFeed,
 )
+from core.opds import OPDSFeed
 
 from sqlalchemy.orm.exc import (
     NoResultFound,
@@ -73,8 +74,9 @@ def feed():
     if page and len(page) >= size:
         after = page[-1].id
         next_url = url_for(
-            'feed', after=after, size=str(size), _external=True)
-        opds_feed.add_link(rel="next", href=next_url)
+            'feed', after=after, size=str(size), _external=True,)
+        opds_feed.add_link(rel="next", href=next_url,
+                           type=OPDSFeed.ACQUISITION_FEED_TYPE)
 
     feed = unicode(opds_feed)
     return feed
