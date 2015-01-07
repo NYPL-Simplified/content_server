@@ -25,6 +25,7 @@ app.debug = True
 from opds import ContentServerAnnotator
 from core.opds import AcquisitionFeed
 from core.util.flask_util import languages_for_request
+from core.app_server import URNLookupController
 
 class Conf:
     db = None
@@ -80,6 +81,10 @@ def feed():
 
     feed = unicode(opds_feed)
     return feed
+
+@app.route('/lookup')
+def lookup():
+    return URNLookupController(Conf.db).work_lookup(ContentServerAnnotator)
 
 if __name__ == '__main__':
 

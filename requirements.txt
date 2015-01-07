@@ -6,6 +6,7 @@ sqlalchemy
 nose
 lxml
 flask
+isbnlib
 
 # This is used by core, but only if you import integration.s3 (which we do).
 tinys3
