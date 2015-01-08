@@ -25,7 +25,10 @@ app.debug = True
 from opds import ContentServerAnnotator
 from core.opds import AcquisitionFeed
 from core.util.flask_util import languages_for_request
-from core.app_server import URNLookupController
+from core.app_server import (
+    feed_response,
+    URNLookupController,
+)
 
 class Conf:
     db = None
@@ -79,8 +82,7 @@ def feed():
         opds_feed.add_link(rel="next", href=next_url,
                            type=OPDSFeed.ACQUISITION_FEED_TYPE)
 
-    feed = unicode(opds_feed)
-    return feed
+    return feed_response(opds_feed)
 
 @app.route('/lookup')
 def lookup():
