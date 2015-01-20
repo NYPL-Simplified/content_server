@@ -1,6 +1,7 @@
 from nose.tools import set_trace
 import os
 
+from core.util.flask_util import problem
 from core.model import (
     production_session,
     Edition,
@@ -48,7 +49,7 @@ else:
 def feed():
 
     arg = flask.request.args.get
-    last_seen_id = arg('after', None)
+    last_update_datetime = arg('after', None)
     size = arg('size', "100")
     try:
         size = int(size)
@@ -59,26 +60,19 @@ def feed():
     this_url = url_for('feed', _external=True)
 
     last_work_seen = None
-    last_id = arg('after', None)
-    if last_id:
-        try:
-            last_id = int(last_id)
-        except ValueError:
-            return problem("Invalid work ID: %s" % last_id, 400)
-        try:
-            last_work_seen = Conf.db.query(Work).filter(Work.id==last_id).one()
-        except NoResultFound:
-            return problem("No such work id: %s" % last_id, 400)
 
     feed = WorkFeed(None, languages, [Work.last_update_time, Work.id], False, WorkFeed.ALL)
-    work_q = feed.page_query(Conf.db, last_work_seen, size)
+    extra_filter = None
+    if last_update_datetime:
+        Work.last_update_time < last_update_datetime
+    work_q = feed.page_query(Conf.db, None, size, extra_filter)
     page = work_q.all()
     opds_feed = AcquisitionFeed(Conf.db, "Open-Access Content", this_url, page,
                                 ContentServerAnnotator)
     if page and len(page) >= size:
         after = page[-1].id
         next_url = url_for(
-            'feed', after=after, size=str(size), _external=True,)
+            'feed', after=page[-1].last_update_time, size=str(size), _external=True,)
         opds_feed.add_link(rel="next", href=next_url,
                            type=OPDSFeed.ACQUISITION_FEED_TYPE)
 
