@@ -1,6 +1,6 @@
 import os
 from core.scripts import Script
-from gutenberg import GutenbergMonitor
+from monitor import GutenbergMonitor
 from illustrated import GutenbergIllustratedCoverageProvider
 from core.model import LicensePool
 

@@ -1,4 +1,5 @@
 # Requirements for core
+feedparser
 pillow
 psycopg2
 requests
