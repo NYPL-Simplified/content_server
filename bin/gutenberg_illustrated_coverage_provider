@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 """Use Gutenberg Illustrated to generate covers and upload them to S3."""
 import os
 import sys

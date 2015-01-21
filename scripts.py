@@ -1,7 +1,10 @@
 import os
 from core.scripts import Script
 from monitor import GutenbergMonitor
-from illustrated import GutenbergIllustratedCoverageProvider
+from coverage import (
+    GutenbergIllustratedCoverageProvider,
+    GutenbergEPUBCoverageProvider,
+)
 from core.model import LicensePool
 
 class GutenbergMonitorScript(Script):
@@ -101,3 +104,9 @@ class GutenbergIllustratedCoverageProviderScript(Script):
         provider = GutenbergIllustratedCoverageProvider(db, data, binary_path)
         provider.run()
         LicensePool.consolidate_works(db)
+
+
+class GutenbergEPUBCoverageProviderScript(Script):
+    def run(self):
+        GutenbergEPUBCoverageProvider(self._db, self.data_directory).run()
+
