@@ -18,10 +18,10 @@ from nose.tools import set_trace
 import rdflib
 from rdflib import Namespace
 
+from core.coverage import CoverageProvider
 from core.model import (
     get_one_or_create,
     CirculationEvent,
-    CoverageProvider,
     Contributor,
     Edition,
     DataSource,

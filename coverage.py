@@ -1,9 +1,9 @@
 import os
 from nose.tools import set_trace
 from illustrated import GutenbergIllustratedDataProvider
+from core.coverage import CoverageProvider
 from core.model import (
     get_one,
-    CoverageProvider,
     DataSource,
     LicensePool,
     Resource,
