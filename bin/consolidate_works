@@ -1,5 +1,5 @@
-#!/usr/bin/python
-"""Consolidate editions into works and mark them as presentation ready."""
+#!/usr/bin/env python
+"""Forcibly reconsolidate editions into works."""
 import os
 import sys
 bin_dir = os.path.split(__file__)[0]

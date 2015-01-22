@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-"""Upload Gutenberg EPUBs to S3."""
+"""Generate and upload EPUBs for all Gutenberg texts."""
 import os
 import sys
 bin_dir = os.path.split(__file__)[0]
 package_dir = os.path.join(bin_dir, "..", "..")
 sys.path.append(os.path.abspath(package_dir))
-from content.scripts import GutenbergEPUBCoverageProviderScript
-GutenbergEPUBCoverageProviderScript().run()
+from content.core.scripts import RunCoverageProviderScript
+from content.coverage import GutenbergIllustratedEPUBProvider
+RunCoverageProviderScript(GutenbergEPUBCoverageProvider).run()

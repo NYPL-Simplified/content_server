@@ -6,6 +6,10 @@ from core.model import (
 
 class GutenbergMonitor(Monitor):
     """Maintain license pool and metadata info for Gutenberg titles.
+
+    TODO: This monitor doesn't really use the normal monitor process,
+    but since it doesn't access an 'API' in the traditional sense it
+    doesn't matter much.
     """
 
     def __init__(self, _db, data_directory):

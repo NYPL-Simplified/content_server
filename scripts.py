@@ -6,6 +6,7 @@ from coverage import (
     GutenbergEPUBCoverageProvider,
 )
 from core.model import LicensePool
+from core.monitor import PresentationReadyMonitor
 
 class GutenbergMonitorScript(Script):
 
@@ -95,18 +96,11 @@ class GutenbergMonitorScript(Script):
             self._db, self.data_directory).run(self.subset)
 
 
-class GutenbergIllustratedCoverageProviderScript(Script):
+class MakePresentationReadyScript(Script):
+
     def run(self):
-        binary_path = self.required_environment_variable(
-            'GUTENBERG_ILLUSTRATED_BINARY_PATH')
-        db = self._db
-        data = self.data_directory
-        provider = GutenbergIllustratedCoverageProvider(db, data, binary_path)
-        provider.run()
-        LicensePool.consolidate_works(db)
-
-
-class GutenbergEPUBCoverageProviderScript(Script):
-    def run(self):
-        GutenbergEPUBCoverageProvider(self._db, self.data_directory).run()
-
+        illustrated = GutenbergIllustratedCoverageProvider(
+            self._db, self.data_directory)
+        epub = GutenbergEPUBCoverageProvider(self._db, self.data_directory)
+        providers = [illustrated, epub]
+        PresentationReadyMonitor(self._db, providers).run()
