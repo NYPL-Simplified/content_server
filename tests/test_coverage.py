@@ -2,6 +2,7 @@ from nose.tools import (
     set_trace,
     eq_,
 )
+import urllib
 from ..core.testing import DatabaseTest
 
 from ..coverage import GutenbergEPUBCoverageProvider
@@ -33,8 +34,8 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         [[local_path, url]] = self.provider.uploader.uploaded
         identifier = edition.primary_identifier
         eq_(self.provider.epub_path_for(identifier), local_path)
-        expected_ending = "%s/%s.epub" % (
-            identifier.type, identifier.identifier)
+        expected_ending = urllib.quote("%s/%s.epub" % (
+            identifier.type, identifier.identifier))
         assert url.endswith(expected_ending)
 
         # A resource was created for this edition.
@@ -47,7 +48,8 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         eq_(True, resource.mirrored)
 
         expected_mirrored_path = "%%(open_access_books)s/%s/%s.epub" % (
-            identifier.type, identifier.identifier)
+            urllib.quote(identifier.type).replace("%", "%%"),
+            identifier.identifier)
 
         eq_(expected_mirrored_path, resource.mirrored_path)
         assert resource.final_url.endswith(expected_ending)

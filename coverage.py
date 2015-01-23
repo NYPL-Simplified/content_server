@@ -1,10 +1,12 @@
 import os
+import urllib
 from nose.tools import set_trace
 from illustrated import GutenbergIllustratedDataProvider
 from core.coverage import CoverageProvider
 from core.model import (
     get_one,
     DataSource,
+    Identifier,
     LicensePool,
     Resource,
 )
@@ -45,8 +47,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         pool = get_one(
             self._db, LicensePool, identifier_id=identifier_obj.id)
 
-        abstract_url = "%%(open_access_books)s/%s/%s.epub" % (
-            identifier_obj.type, identifier_obj.identifier)
+        args = [identifier_obj.type, identifier_obj.identifier]
+        args = [urllib.quote(x).replace("%", "%%") for x in args]
+        abstract_url = "%%(open_access_books)s/%s/%s.epub" % tuple(args)
         resource, new = self.add_open_access_resource(
             identifier_obj, pool, abstract_url)
         to_upload = [(epub_path, resource.final_url)]
@@ -58,12 +61,12 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         if identifier.type != Identifier.GUTENBERG_ID:
             return None
         epub_directory = os.path.join(
-            self.epub_mirror, identifier_obj.identifier)
+            self.epub_mirror, identifier.identifier)
         if not os.path.exists(epub_directory):
             return None
         files = os.listdir(epub_directory)
-        epub = self.best_epub_in(files)
-        if not epub:
+        epub_filename = self.best_epub_in(files)
+        if not epub_filename:
             return None
         return os.path.join(epub_directory, epub_filename)
 
