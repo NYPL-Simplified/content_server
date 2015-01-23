@@ -8,6 +8,7 @@ from core.model import (
     LicensePool,
     Resource,
 )
+from core.s3 import S3Uploader
 
 class GutenbergEPUBCoverageProvider(CoverageProvider):
     """Upload a text's epub to S3.
@@ -16,9 +17,8 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     uploading it.
     """
 
-    MEDIA_TYPE = "application/epub+zip"
-
-    def __init__(self, _db, data_directory=None, workset_size=5):
+    def __init__(self, _db, data_directory=None, workset_size=5,
+                 s3_uploader=S3Uploader):
         data_directory = data_directory or os.environ['DATA_DIRECTORY']
 
         self.gutenberg_mirror = os.path.join(
@@ -29,6 +29,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         input_source = DataSource.lookup(_db, DataSource.GUTENBERG)
         self.output_source = DataSource.lookup(
             _db, DataSource.GUTENBERG_EPUB_GENERATOR)        
+        if callable(s3_uploader):
+            s3_uploader = s3_uploader()
+        self.uploader = s3_uploader
 
         super(GutenbergEPUBCoverageProvider, self).__init__(
             self.output_source.name, input_source, self.output_source,
@@ -36,27 +39,36 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
 
     def process_edition(self, edition):
         identifier_obj = edition.primary_identifier
-        epub_directory = os.path.join(
-            self.epub_mirror, identifier_obj.identifier)
-        if not os.path.exists(epub_directory):
+        epub_path = self.epub_path_for(identifier_obj)
+        if not epub_path:
             return False
-        files = os.listdir(epub_directory)
-        epub_filename = self.best_epub_in(files)
-        if not epub_filename:
-            return False
-
         pool = get_one(
             self._db, LicensePool, identifier_id=identifier_obj.id)
 
-        path = os.path.join(epub_directory, epub_filename)
-        abstract_url = "%%(open_access_download_mirror)s/%s/%s.epub" % (
+        abstract_url = "%%(open_access_books)s/%s/%s.epub" % (
             identifier_obj.type, identifier_obj.identifier)
         resource, new = self.add_open_access_resource(
             identifier_obj, pool, abstract_url)
-        to_upload = ((path, resource.final_url))
+        to_upload = [(epub_path, resource.final_url)]
         self.uploader.upload_resources(to_upload)
+        return True
 
-    def best_epub_in(self, files):
+    def epub_path_for(self, identifier):
+        """Find the path to the best EPUB for the given identifier."""
+        if identifier.type != Identifier.GUTENBERG_ID:
+            return None
+        epub_directory = os.path.join(
+            self.epub_mirror, identifier_obj.identifier)
+        if not os.path.exists(epub_directory):
+            return None
+        files = os.listdir(epub_directory)
+        epub = self.best_epub_in(files)
+        if not epub:
+            return None
+        return os.path.join(epub_directory, epub_filename)
+
+    @classmethod
+    def best_epub_in(cls, files):
         """Find the best EPUB in the given file list."""
         without_images = None
         with_images = None
@@ -73,9 +85,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     def add_open_access_resource(self, identifier, license_pool, url):
         resource, new = identifier.add_resource(
             Resource.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
-            license_pool, self.MEDIA_TYPE)
+            license_pool, Resource.EPUB_MEDIA_TYPE)
         if new:
-            resource.mirrored_to(url, self.MEDIA_TYPE)
+            resource.mirrored_to(url, Resource.EPUB_MEDIA_TYPE)
         return resource, new
 
 
