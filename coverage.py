@@ -1,4 +1,7 @@
+import json
 import os
+import subprocess
+import tempfile
 import urllib
 from nose.tools import set_trace
 from illustrated import GutenbergIllustratedDataProvider
@@ -116,7 +119,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         binary_path = binary_path or os.environ['GUTENBERG_ILLUSTRATED_BINARY_PATH']
 
         self.gutenberg_mirror = os.path.join(
-            data_directory, "gutenberg") + "/"
+            data_directory, DataSource.GUTENBERG, "gutenberg-mirror") + "/"
         self.file_list = os.path.join(self.gutenberg_mirror, "ls-R")
         self.binary_path = binary_path
         binary_directory = os.path.split(self.binary_path)[0]
@@ -156,14 +159,6 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             large_enough.append(i)
         return large_enough
 
-    def set_presentation_ready(self, edition):
-
-        # Calculate (or recalculate) the Work's presentation.
-        edition.work.calculate_presentation()
-
-        # Set the work as presentation ready.
-        edition.work.presentation_ready = True
-
     def process_edition(self, edition):
         data = GutenbergIllustratedDataProvider.data_for_edition(edition)
 
@@ -171,7 +166,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         identifier = identifier_obj.identifier
         if identifier not in self.illustration_lists:
             # No illustrations for this edition. Nothing to do.
-            self.set_presentation_ready(edition)
+            print "[ILLUSTRATED] No illustrations."
             return True
 
         data['identifier'] = identifier
@@ -184,7 +179,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
 
         if not illustrations:
             # All illustrations were filtered out. Nothing to do.
-            self.set_presentation_ready(edition)
+            print "[ILLUSTRATED] All illustrations filtered out."
             return True
 
         # There is at least one cover available for this book.
@@ -193,6 +188,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         data['illustrations'] = illustrations
         
         # Write the input to a temporary file.
+        set_trace()
         fh, input_path = tempfile.mkstemp()
         json.dump(data, open(input_path, "w"))
 
@@ -243,7 +239,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             to_upload.append((path, resource.final_url))
 
         self.uploader.upload_resources(to_upload)
-        # self.set_presentation_ready(edition)
+        print "[ILLUSTRATED] Uploaded %d resources." % len(to_upload)
         return True
 
     def args_for(self, input_path):
