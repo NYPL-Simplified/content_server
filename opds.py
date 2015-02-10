@@ -17,7 +17,7 @@ from core.model import (
 class ContentServerAnnotator(VerboseAnnotator):
 
     @classmethod
-    def annotate_work_entry(cls, work, active_license_pool, feed, entry, links):
+    def annotate_work_entry(cls, work, active_license_pool, edition, identifier, feed, entry, links):
         if not active_license_pool.open_access:
             return
 

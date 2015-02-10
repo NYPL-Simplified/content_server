@@ -188,7 +188,6 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         data['illustrations'] = illustrations
         
         # Write the input to a temporary file.
-        set_trace()
         fh, input_path = tempfile.mkstemp()
         json.dump(data, open(input_path, "w"))
 

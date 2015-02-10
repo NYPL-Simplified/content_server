@@ -61,7 +61,7 @@ def feed():
 
     last_work_seen = None
 
-    feed = WorkFeed(None, languages, [Work.last_update_time, Work.id], False, WorkFeed.ALL)
+    feed = WorkFeed(languages, [Work.last_update_time, Work.id], False, WorkFeed.ALL)
     extra_filter = None
     if last_update_datetime:
         Work.last_update_time < last_update_datetime
@@ -83,7 +83,7 @@ def lookup():
     return URNLookupController(Conf.db).work_lookup(ContentServerAnnotator)
 
 if __name__ == '__main__':
-
     debug = True
     host = "0.0.0.0"
-    app.run(debug=debug, host=host)
+    port = int(os.environ['CONTENT_WEB_APP_PORT'])
+    app.run(debug=debug, host=host, port=port)
