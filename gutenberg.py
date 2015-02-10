@@ -142,6 +142,9 @@ class GutenbergAPI(object):
         url = random.choice(self.MIRRORS)
         print "Refreshing %s" % url
         response = requests.get(url)
+        if response.status_code == '403':
+            print "Request blocked by Gutenberg, not updating."
+            return
         tmp_path = self.catalog_path + ".tmp"
         open(tmp_path, "wb").write(response.content)
         shutil.move(tmp_path, self.catalog_path)
