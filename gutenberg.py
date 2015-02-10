@@ -54,8 +54,9 @@ class GutenbergAPI(object):
 
 
     MIRRORS = [
-        "http://www.gutenberg.org/cache/epub/feeds/rdf-files.tar.bz2",
+        # "http://www.gutenberg.org/cache/epub/feeds/rdf-files.tar.bz2",
         "http://gutenberg.readingroo.ms/cache/generated/feeds/rdf-files.tar.bz2",
+        "http://gutenberg.pglaf.org/cache/generated/feeds/rdf-files.tar.bz2",
     ] 
 
     # This will be passed in to Representation.get when downloading
