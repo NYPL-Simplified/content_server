@@ -1,2 +1,2 @@
 #!/bin/sh
-rsync -av --exclude=*.wav --exclude=*.html --exclude=*.epub --exclude=*.mobi --exclude=*.ogg --exclude=*.mp3 --exclude=*.mpg --exclude=*.zip --exclude=*.spx --exclude=*.m4b --exclude=*.iso --exclude=*.ISO ftp@ftp.ibiblio.org::gutenberg data/Gutenberg/gutenberg-mirror
+rsync -av --exclude=*.wav --exclude=*.html --exclude=*.epub --exclude=*.mobi --exclude=*.ogg --exclude=*.mp3 --exclude=*.mpg --exclude=*.zip --exclude=*.spx --exclude=*.m4b --exclude=*.iso --exclude=*.ISO ftp@ftp.ibiblio.org::gutenberg $DATA_DIRECTORY/Gutenberg/gutenberg-mirror

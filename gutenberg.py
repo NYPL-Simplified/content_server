@@ -55,8 +55,9 @@ class GutenbergAPI(object):
 
 
     MIRRORS = [
-        "http://www.gutenberg.org/cache/epub/feeds/rdf-files.tar.bz2",
+        # "http://www.gutenberg.org/cache/epub/feeds/rdf-files.tar.bz2",
         "http://gutenberg.readingroo.ms/cache/generated/feeds/rdf-files.tar.bz2",
+        "http://gutenberg.pglaf.org/cache/generated/feeds/rdf-files.tar.bz2",
     ] 
 
     # This will be passed in to Representation.get when downloading
@@ -143,6 +144,9 @@ class GutenbergAPI(object):
         url = random.choice(self.MIRRORS)
         print "Refreshing %s" % url
         response = requests.get(url)
+        if response.status_code == '403':
+            print "Request blocked by Gutenberg, not updating."
+            return
         tmp_path = self.catalog_path + ".tmp"
         open(tmp_path, "wb").write(response.content)
         shutil.move(tmp_path, self.catalog_path)
@@ -292,7 +296,7 @@ class GutenbergRDFExtractor(object):
             # TODO: Some titles such as 44244 have titles in multiple
             # languages. Not sure what to do about that.
             uri, ignore, title = title_triples[0]
-            print " Parsing book %s" % title
+            print " Parsing book %s" % title.encode("utf8")
             book, rights_status, new = cls.parse_book(_db, g, uri, title)
 
         else:
