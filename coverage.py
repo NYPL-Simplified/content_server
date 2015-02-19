@@ -22,8 +22,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     uploading it.
     """
 
-    def __init__(self, _db, data_directory=None, workset_size=5,
-                 s3_uploader=S3Uploader):
+    def __init__(self, _db, workset_size=5, mirror_uploader=S3Uploader):
         data_directory = data_directory or os.environ['DATA_DIRECTORY']
 
         self.gutenberg_mirror = os.path.join(
@@ -34,9 +33,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         input_source = DataSource.lookup(_db, DataSource.GUTENBERG)
         self.output_source = DataSource.lookup(
             _db, DataSource.GUTENBERG_EPUB_GENERATOR)        
-        if callable(s3_uploader):
-            s3_uploader = s3_uploader()
-        self.uploader = s3_uploader
+        if callable(mirror_uploader):
+            mirror_uploader = mirror_uploader()
+        self.uploader = mirror_uploader
 
         super(GutenbergEPUBCoverageProvider, self).__init__(
             self.output_source.name, input_source, self.output_source,
@@ -50,13 +49,12 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         pool = get_one(
             self._db, LicensePool, identifier_id=identifier_obj.id)
 
-        args = [identifier_obj.type, identifier_obj.identifier]
-        args = [urllib.quote(x).replace("%", "%%") for x in args]
-        abstract_url = "%%(open_access_books)s/%s/%s.epub" % tuple(args)
-        resource, new = self.add_open_access_resource(
-            identifier_obj, pool, abstract_url)
-        to_upload = [(epub_path, resource.final_url)]
-        self.uploader.upload_resources(to_upload)
+        url = self.uploader.book_url(identifier_obj, 'epub')
+        link, new = license_pool.add_link(
+            Resource.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
+            Resource.EPUB_MEDIA_TYPE)
+        link.set_fetched_content(None, epub_path)
+        self.uploader.mirror_one(resource.representation)
         return True
 
     def epub_path_for(self, identifier):
@@ -88,14 +86,6 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
                 without_images = i
         return with_images or without_images
 
-    def add_open_access_resource(self, identifier, license_pool, url):
-        resource, new = identifier.add_resource(
-            Resource.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
-            license_pool, Resource.EPUB_MEDIA_TYPE)
-        if new:
-            resource.mirrored_to(url, Resource.EPUB_MEDIA_TYPE)
-        return resource, new
-
 
 class GutenbergIllustratedCoverageProvider(CoverageProvider):
 
@@ -112,10 +102,10 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
     IMAGE_HEIGHT = 300
     IMAGE_WIDTH = 200
 
-    def __init__(self, _db, data_directory=None, binary_path=None,
+    def __init__(self, _db, binary_path=None,
                  workset_size=5):
 
-        data_directory = data_directory or os.environ['DATA_DIRECTORY']
+        data_directory = os.environ['DATA_DIRECTORY']
         binary_path = binary_path or os.environ['GUTENBERG_ILLUSTRATED_BINARY_PATH']
 
         self.gutenberg_mirror = os.path.join(
@@ -131,6 +121,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         input_source = DataSource.lookup(_db, DataSource.GUTENBERG)
         self.output_source = DataSource.lookup(
             _db, DataSource.GUTENBERG_COVER_GENERATOR)
+
         super(GutenbergIllustratedCoverageProvider, self).__init__(
             "Gutenberg Illustrated", input_source, self.output_source,
             workset_size=workset_size)
@@ -223,35 +214,26 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
                 continue
             path = os.path.join(output_directory, filename)
 
-            # Upload the generated images to S3.
-            #
+            # Load each generated image into the database as a
+            # resource.
+
             # TODO: list directory before generation and only upload
             # images that changed during generation. Don't remove
             # images that were removed (e.g. because cutoff changed)
             # because people may still be using them.
-            abstract_url = "%%(gutenberg_illustrated_mirror)s/%s/%s" % (
-                identifier, filename
-            )
-            
-            resource, new = self.add_image_resource(
-                identifier_obj, pool, abstract_url)
-            to_upload.append((path, resource.final_url))
 
-        self.uploader.upload_resources(to_upload)
+            url = self.uploader.cover_image_url(
+                data_source, identifier_obj, filename)
+            link, new = license_pool.add_link(
+                Hyperlink.IMAGE, url, self.output_source)
+            link.resource.representation.set_fetched_content(None, path)
+            to_upload.append(link.resource.representation)
+
+        self.uploader.mirror_batch(to_upload)
         print "[ILLUSTRATED] Uploaded %d resources." % len(to_upload)
         return True
 
     def args_for(self, input_path):
+        """The command-line args to make covers out of a given directory."""
         return [self.binary_path, self.gutenberg_mirror, self.output_directory,
                 input_path, self.font_path, self.font_path]
-
-
-    def add_image_resource(self, identifier, license_pool, url):
-        resource, new = identifier.add_resource(
-            Resource.IMAGE, url, self.output_source, license_pool,
-            self.MEDIA_TYPE)
-        if new:
-            resource.mirrored_to(url, self.MEDIA_TYPE)
-            resource.image_width= self.IMAGE_WIDTH
-            resource.image_height = self.IMAGE_HEIGHT
-        return resource, new

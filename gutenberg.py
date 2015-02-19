@@ -25,6 +25,7 @@ from core.model import (
     Contributor,
     Edition,
     DataSource,
+    Hyperlink,
     Measurement,
     Representation,
     Resource,
@@ -337,8 +338,6 @@ class GutenbergRDFExtractor(object):
         # As far as I can tell, Gutenberg descriptions are 100%
         # useless for our purposes. They should not be used, even if
         # no other description is available.
-        # summary = cls._value(g, (uri, cls.dcterms.description, None))
-        summary = None
 
         publisher = cls._value(g, (uri, cls.dcterms.publisher, None))
 
@@ -392,49 +391,28 @@ class GutenbergRDFExtractor(object):
                 identifier.classify(source, vocabulary, value)
 
 
-        # If there is a description, turn it into a Resource.
-        identifier = book.primary_identifier
-        if summary:
-            rel = Resource.DESCRIPTION
-            identifier.add_resource(
-                rel, None, source, media_type="text/plain", content=summary)
-
         medium = Edition.BOOK_MEDIUM
 
-        # Turn the Gutenberg download links into Resources associated 
+        # Turn the Gutenberg download links into Hyperlinks associated 
         # with the new Edition. They will serve either as open access
         # downloads or cover images.
         download_links = cls._values(g, (uri, cls.dcterms.hasFormat, None))
-        no_known_cover = True
+        identifier.add_link(Resource.CANONICAL, str(uri), source)
+
+        # We're not allowed to use any of the download or image
+        # links--we have to make our own from an rsynced mirror--but
+        # we can look through the links to determine which medium to
+        # assign to this book.
         for href in download_links:
             for format_uri in cls._values(
                     g, (href, cls.dcterms['format'], None)):
                 media_type = unicode(
                     cls._value(g, (format_uri, cls.rdf.value, None)))
-                rel = Resource.OPEN_ACCESS_DOWNLOAD
-                if media_type.startswith('image/'):
-                    if '.medium.' in href:
-                        rel = Resource.IMAGE
-                        # NOTE: We currently never use Gutenberg
-                        # covers (they're usually bad), so if we find
-                        # one of these resources we don't count it as
-                        # a cover.
-                        # no_known_cover = False
-                    else:
-                        # We don't care about thumbnail images--we
-                        # make our own.
-                        rel = None
-                elif media_type.startswith('audio/'):
+                if media_type.startswith('audio/'):
                     medium = Edition.AUDIO_MEDIUM
                 elif media_type.startswith('video/'):
                     medium = Edition.VIDEO_MEDIUM
-                if rel:
-                    identifier.add_resource(
-                        rel, unicode(href), source, media_type=media_type)
-                identifier.add_resource(
-                    Resource.CANONICAL, unicode(uri), source)
-        book.no_known_cover = no_known_cover
-
+        book.no_known_cover = True
         book.medium = medium
 
         # Associate the appropriate contributors with the book.
