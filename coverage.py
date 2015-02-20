@@ -55,8 +55,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         link, new = license_pool.add_link(
             Hyperlink.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
             Representation.EPUB_MEDIA_TYPE, None, epub_path)
-        link.resource.representation.mirror_url = url
-        self.uploader.mirror_one(link.resource.representation)
+        representation = link.resource.representation
+        representation.mirror_url = url
+        self.uploader.mirror_one(representation)
         return True
 
     def epub_path_for(self, identifier):
@@ -146,17 +147,20 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
                 continue
             file_size = os.stat(path).st_size
             if file_size < self.IMAGE_CUTOFF_SIZE:
-                print "INFO: %s is only %d bytes, not using it." % (
-                    path, file_size)
+                #print "INFO: %s is only %d bytes, not using it." % (
+                #    path, file_size)
                 continue
             large_enough.append(i)
         return large_enough
 
     def process_edition(self, edition):
         data = GutenbergIllustratedDataProvider.data_for_edition(edition)
+        data_source = DataSource.lookup(
+            self._db, DataSource.GUTENBERG_COVER_GENERATOR)
 
         identifier_obj = edition.primary_identifier
         identifier = identifier_obj.identifier
+        print "[ILLUSTRATED]", identifier_obj
         if identifier not in self.illustration_lists:
             # No illustrations for this edition. Nothing to do.
             print "[ILLUSTRATED] No illustrations."
@@ -191,7 +195,12 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         args = self.args_for(input_path)
         fh, output_capture_path = tempfile.mkstemp()
         output_capture = open(output_capture_path, "w")
-        subprocess.call(args, stdout=output_capture)
+        try:
+            subprocess.call(args, stdout=output_capture)
+        except Exception, e:
+            raise OSError(
+                "Could not invoke subprocess %s. Original error: %s" % (
+                " ".join(args), str(e)))
 
         # We're done with the input file. Remove it.
         os.remove(input_path)
@@ -200,7 +209,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         output_directory = os.path.join(
             self.output_directory, identifier)
 
-        pool = get_one(
+        license_pool = get_one(
             self._db, LicensePool, identifier_id=identifier_obj.id)
         to_upload = []
         if os.path.exists(output_directory):
@@ -227,11 +236,11 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             url = self.uploader.cover_image_url(
                 data_source, identifier_obj, filename)
             link, new = license_pool.add_link(
-                Hyperlink.IMAGE, url, self.output_source)
+                Hyperlink.IMAGE, url, self.output_source,
+                "image/png", None, path)
             r = link.resource.representation
             r.mirror_url = url
-            r.set_fetched_content(None, path)
-            to_upload.append(r.representation)
+            to_upload.append(r)
 
         self.uploader.mirror_batch(to_upload)
         print "[ILLUSTRATED] Uploaded %d resources." % len(to_upload)

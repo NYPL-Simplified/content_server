@@ -99,9 +99,8 @@ class GutenbergMonitorScript(Script):
 class MakePresentationReadyScript(Script):
 
     def run(self):
-        illustrated = GutenbergIllustratedCoverageProvider(
-            self._db, self.data_directory)
-        epub = GutenbergEPUBCoverageProvider(self._db, self.data_directory)
+        illustrated = GutenbergIllustratedCoverageProvider(self._db)
+        epub = GutenbergEPUBCoverageProvider(self._db)
 
         providers = [illustrated, epub]
         PresentationReadyMonitor(self._db, providers).run()
