@@ -9,6 +9,7 @@ from nose.tools import set_trace, eq_
 from ..core.model import (
     Contributor,
     DataSource,
+    Hyperlink,
     Resource,
     Subject,
     Identifier,
@@ -84,9 +85,9 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
         eq_(gutenberg, book.data_source)
         eq_(identifier, book.primary_identifier)
 
-        [canonical] = [x for x in book.primary_identifier.resources
-                     if x.rel == 'canonical']
-        eq_("http://www.gutenberg.org/ebooks/17", canonical.href)
+        [canonical] = [x for x in book.primary_identifier.links
+                       if x.rel == 'canonical']
+        eq_("http://www.gutenberg.org/ebooks/17", canonical.resource.url)
 
         eq_("The Book of Mormon", book.title)
         eq_("An Account Written by the Hand of Mormon Upon Plates Taken from the Plates of Nephi", book.subtitle)
@@ -139,10 +140,10 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
         book, rights_uri, new = GutenbergRDFExtractor.book_in(self._db, "40993", fh)
 
         identifier = book.primary_identifier
-        [image] = [x for x in identifier.resources if x.rel == Resource.IMAGE]
-        eq_("http://www.gutenberg.org/cache/epub/40993/pg40993.cover.medium.jpg",
-            image.href)
-        eq_("image/jpeg", image.media_type)
+
+        # The RDF includes a cover image, but we don't pick it up.
+        # If we want to use it, we'll find it in the rsynced mirror.
+        eq_([], [x for x in identifier.links if x.rel == Hyperlink.IMAGE])
 
     def test_rdf_file_describing_no_books(self):
         """GutenbergRDFExtractor can handle an RDF document that doesn't

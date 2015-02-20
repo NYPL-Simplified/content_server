@@ -9,8 +9,10 @@ from core.coverage import CoverageProvider
 from core.model import (
     get_one,
     DataSource,
+    Hyperlink,
     Identifier,
     LicensePool,
+    Representation,
     Resource,
 )
 from core.s3 import S3Uploader
@@ -23,7 +25,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     """
 
     def __init__(self, _db, workset_size=5, mirror_uploader=S3Uploader):
-        data_directory = data_directory or os.environ['DATA_DIRECTORY']
+        data_directory = os.environ['DATA_DIRECTORY']
 
         self.gutenberg_mirror = os.path.join(
             data_directory, "Gutenberg", "gutenberg-mirror") + "/"
@@ -46,15 +48,15 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         epub_path = self.epub_path_for(identifier_obj)
         if not epub_path:
             return False
-        pool = get_one(
+        license_pool = get_one(
             self._db, LicensePool, identifier_id=identifier_obj.id)
 
         url = self.uploader.book_url(identifier_obj, 'epub')
         link, new = license_pool.add_link(
-            Resource.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
-            Resource.EPUB_MEDIA_TYPE)
-        link.set_fetched_content(None, epub_path)
-        self.uploader.mirror_one(resource.representation)
+            Hyperlink.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
+            Representation.EPUB_MEDIA_TYPE, None, epub_path)
+        link.resource.representation.mirror_url = url
+        self.uploader.mirror_one(link.resource.representation)
         return True
 
     def epub_path_for(self, identifier):
@@ -226,8 +228,10 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
                 data_source, identifier_obj, filename)
             link, new = license_pool.add_link(
                 Hyperlink.IMAGE, url, self.output_source)
-            link.resource.representation.set_fetched_content(None, path)
-            to_upload.append(link.resource.representation)
+            r = link.resource.representation
+            r.mirror_url = url
+            r.set_fetched_content(None, path)
+            to_upload.append(r.representation)
 
         self.uploader.mirror_batch(to_upload)
         print "[ILLUSTRATED] Uploaded %d resources." % len(to_upload)

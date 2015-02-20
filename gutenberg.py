@@ -401,7 +401,7 @@ class GutenbergRDFExtractor(object):
         # with the new Edition. They will serve either as open access
         # downloads or cover images.
         download_links = cls._values(g, (uri, cls.dcterms.hasFormat, None))
-        identifier.add_link(Resource.CANONICAL, str(uri), source)
+        identifier.add_link(Hyperlink.CANONICAL, str(uri), source)
 
         # We're not allowed to use any of the download or image
         # links--we have to make our own from an rsynced mirror--but
