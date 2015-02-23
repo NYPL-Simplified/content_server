@@ -103,4 +103,5 @@ class MakePresentationReadyScript(Script):
         epub = GutenbergEPUBCoverageProvider(self._db)
 
         providers = [illustrated, epub]
-        PresentationReadyMonitor(self._db, providers).run()
+        PresentationReadyMonitor(
+            self._db, providers, calculate_work_even_if_no_author=True).run()
