@@ -1,5 +1,6 @@
 from nose.tools import set_trace
 import os
+import urlparse
 
 from core.util.flask_util import problem
 from core.model import (
@@ -84,6 +85,12 @@ def lookup():
 
 if __name__ == '__main__':
     debug = True
-    host = "0.0.0.0"
-    port = int(os.environ['CONTENT_WEB_APP_PORT'])
+    url = os.environ['CONTENT_WEB_APP_URL']
+    scheme, netloc, path, parameters, query, fragment = urlparse.urlparse(url)
+    if ':' in netloc:
+        host, port = netloc.split(':')
+        port = int(port)
+    else:
+        host = netloc
+        port = 80
     app.run(debug=debug, host=host, port=port)

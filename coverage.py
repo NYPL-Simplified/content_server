@@ -202,6 +202,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
                 "Could not invoke subprocess %s. Original error: %s" % (
                 " ".join(args), str(e)))
 
+        print open(output_capture_path).read()
         # We're done with the input file. Remove it.
         os.remove(input_path)
 
