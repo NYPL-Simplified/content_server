@@ -131,10 +131,12 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
 
         # Load the illustration lists from the Gutenberg ls-R file.
         self.illustration_lists = dict()
+        file_list = open(self.file_list)
         for (gid, illustrations) in GutenbergIllustratedDataProvider.illustrations_from_file_list(
-                open(self.file_list)):
+            file_list):
             if gid not in self.illustration_lists:
                 self.illustration_lists[gid] = illustrations
+        file_list.close()
 
         self.uploader = S3Uploader()
 
@@ -186,11 +188,13 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         
         # Write the input to a temporary file.
         fh, input_path = tempfile.mkstemp()
-        json.dump(data, open(input_path, "w"))
+        inp = open(input_path, "w")
+        json.dump(data, inp)
+        inp.close()
 
         # Make sure the output directory exists.
         if not os.path.exists(self.output_directory):
-                         os.makedirs(self.output_directory)
+            os.makedirs(self.output_directory)
 
         args = self.args_for(input_path)
         fh, output_capture_path = tempfile.mkstemp()
@@ -202,7 +206,10 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
                 "Could not invoke subprocess %s. Original error: %s" % (
                 " ".join(args), str(e)))
 
-        print open(output_capture_path).read()
+        output_capture.close()
+        output_capture = open(output_capture_path)
+        print output_capture.read()
+        output_capture.close()
         # We're done with the input file. Remove it.
         os.remove(input_path)
 
