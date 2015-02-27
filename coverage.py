@@ -187,31 +187,30 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         data['illustrations'] = illustrations
         
         # Write the input to a temporary file.
-        fh, input_path = tempfile.mkstemp()
-        inp = open(input_path, "w")
-        json.dump(data, inp)
-        inp.close()
+        input_fh = tempfile.NamedTemporaryFile()
+        json.dump(data, input_fh)
+        input_fh.flush()
 
         # Make sure the output directory exists.
         if not os.path.exists(self.output_directory):
             os.makedirs(self.output_directory)
 
-        args = self.args_for(input_path)
-        fh, output_capture_path = tempfile.mkstemp()
-        output_capture = open(output_capture_path, "w")
+        args = self.args_for(input_fh.name)
+        output_fh = tempfile.NamedTemporaryFile()
         try:
-            subprocess.call(args, stdout=output_capture)
+            subprocess.call(args, stdout=output_fh)
         except Exception, e:
             raise OSError(
                 "Could not invoke subprocess %s. Original error: %s" % (
                 " ".join(args), str(e)))
 
-        output_capture.close()
-        output_capture = open(output_capture_path)
+        output_capture = open(output_fh.name)
         print output_capture.read()
         output_capture.close()
-        # We're done with the input file. Remove it.
-        os.remove(input_path)
+
+        # We're done with the temporary files.
+        input_fh.close()
+        output_fh.close()
 
         # Associate 'cover' resources with the identifier
         output_directory = os.path.join(
