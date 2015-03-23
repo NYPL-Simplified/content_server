@@ -50,7 +50,7 @@ else:
 def feed():
 
     arg = flask.request.args.get
-    last_update_datetime = arg('after', None)
+    last_update_datetime = arg('before', None)
     size = arg('size', "100")
     try:
         size = int(size)
@@ -65,15 +65,15 @@ def feed():
     feed = WorkFeed(languages, [Work.last_update_time, Work.id], False, WorkFeed.ALL)
     extra_filter = None
     if last_update_datetime:
-        Work.last_update_time < last_update_datetime
+        extra_filter = Work.last_update_time < last_update_datetime
     work_q = feed.page_query(Conf.db, None, size, extra_filter)
     page = work_q.all()
     opds_feed = AcquisitionFeed(Conf.db, "Open-Access Content", this_url, page,
                                 ContentServerAnnotator)
     if page and len(page) >= size:
-        after = page[-1].id
+        before = page[-1].id
         next_url = url_for(
-            'feed', after=page[-1].last_update_time, size=str(size), _external=True,)
+            'feed', before=page[-1].last_update_time, size=str(size), _external=True,)
         opds_feed.add_link(rel="next", href=next_url,
                            type=OPDSFeed.ACQUISITION_FEED_TYPE)
 
