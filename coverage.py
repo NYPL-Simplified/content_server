@@ -9,6 +9,7 @@ from core.coverage import CoverageProvider
 from core.model import (
     get_one,
     DataSource,
+    Edition,
     Hyperlink,
     Identifier,
     LicensePool,
@@ -44,6 +45,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
             workset_size=workset_size)
 
     def process_edition(self, edition):
+        if edition.medium in (Edition.AUDIO_MEDIUM, Edition.VIDEO_MEDIUM):
+            # There is no epub to mirror.
+            return True
         identifier_obj = edition.primary_identifier
         epub_path = self.epub_path_for(identifier_obj)
         if not epub_path:
