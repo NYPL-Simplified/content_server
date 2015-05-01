@@ -1,2 +1,2 @@
 #!/bin/sh
-rsync -av --exclude=*.mobi --exclude=*.html --exclude=*.plucker* --exclude=*.jar --exclude=*.xapian --exclude=*.utf8 --exclude=*.png --exclude=*.gzip --exclude=*.jpg ftp@ftp.ibiblio.org::gutenberg-epub $DATA_DIRECTORY/Gutenberg/gutenberg-epub
+rsync -av --exclude=*.mobi --exclude=*.html --exclude=*.plucker* --exclude=*.jar --exclude=*.xapian --exclude=*.utf8 --exclude=*.png --exclude=*.gzip --exclude=*.jpg --exclude=*.log ftp@ftp.ibiblio.org::gutenberg-epub $DATA_DIRECTORY/Gutenberg/gutenberg-epub
