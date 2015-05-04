@@ -71,10 +71,12 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         epub_directory = os.path.join(
             self.epub_mirror, identifier.identifier)
         if not os.path.exists(epub_directory):
+            print "Expected EPUB directory %s does not exist!" % epub_directory
             return None
         files = os.listdir(epub_directory)
         epub_filename = self.best_epub_in(files)
         if not epub_filename:
+            print "Could not find a good EPUB in %s!" % epub_directory
             return None
         return os.path.join(epub_directory, epub_filename)
 
