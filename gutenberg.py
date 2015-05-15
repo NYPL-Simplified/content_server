@@ -177,7 +177,7 @@ class GutenbergAPI(object):
 
         Yields (Edition, LicensePool) 2-tuples.
         """
-        books = self.all_books()
+        books = list(self.all_books())
         for pg_id, archive, archive_item in books:
             if subset is not None and not subset(pg_id, archive, archive_item):
                 continue
@@ -401,9 +401,9 @@ class GutenbergRDFExtractor(object):
         # with the new Edition. They will serve either as open access
         # downloads or cover images.
         download_links = cls._values(g, (uri, cls.dcterms.hasFormat, None))
-        identifier.add_link(Resource.CANONICAL, str(uri), source)
+        identifier.add_link(Hyperlink.CANONICAL, str(uri), source)
 
-        # We're not allowed to use any of the download or image
+        # Gutenberg won't allow us to use any of the download or image
         # links--we have to make our own from an rsynced mirror--but
         # we can look through the links to determine which medium to
         # assign to this book.

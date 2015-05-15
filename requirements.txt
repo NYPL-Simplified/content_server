@@ -11,6 +11,8 @@ isbnlib
 tinys3
 textblob
 rdflib
+elasticsearch
+python-dateutil
 
 # Used only by content
 ebookmaker>=0.4.0a4
