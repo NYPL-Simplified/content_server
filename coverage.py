@@ -9,8 +9,11 @@ from core.coverage import CoverageProvider
 from core.model import (
     get_one,
     DataSource,
+    Edition,
+    Hyperlink,
     Identifier,
     LicensePool,
+    Representation,
     Resource,
 )
 from core.s3 import S3Uploader
@@ -23,7 +26,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     """
 
     def __init__(self, _db, workset_size=5, mirror_uploader=S3Uploader):
-        data_directory = data_directory or os.environ['DATA_DIRECTORY']
+        data_directory = os.environ['DATA_DIRECTORY']
 
         self.gutenberg_mirror = os.path.join(
             data_directory, "Gutenberg", "gutenberg-mirror") + "/"
@@ -42,19 +45,23 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
             workset_size=workset_size)
 
     def process_edition(self, edition):
+        if edition.medium in (Edition.AUDIO_MEDIUM, Edition.VIDEO_MEDIUM):
+            # There is no epub to mirror.
+            return True
         identifier_obj = edition.primary_identifier
         epub_path = self.epub_path_for(identifier_obj)
         if not epub_path:
             return False
-        pool = get_one(
+        license_pool = get_one(
             self._db, LicensePool, identifier_id=identifier_obj.id)
 
         url = self.uploader.book_url(identifier_obj, 'epub')
         link, new = license_pool.add_link(
-            Resource.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
-            Resource.EPUB_MEDIA_TYPE)
-        link.set_fetched_content(None, epub_path)
-        self.uploader.mirror_one(resource.representation)
+            Hyperlink.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
+            Representation.EPUB_MEDIA_TYPE, None, epub_path)
+        representation = link.resource.representation
+        representation.mirror_url = url
+        self.uploader.mirror_one(representation)
         return True
 
     def epub_path_for(self, identifier):
@@ -64,10 +71,12 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         epub_directory = os.path.join(
             self.epub_mirror, identifier.identifier)
         if not os.path.exists(epub_directory):
+            print "Expected EPUB directory %s does not exist!" % epub_directory
             return None
         files = os.listdir(epub_directory)
         epub_filename = self.best_epub_in(files)
         if not epub_filename:
+            print "Could not find a good EPUB in %s!" % epub_directory
             return None
         return os.path.join(epub_directory, epub_filename)
 
@@ -128,10 +137,12 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
 
         # Load the illustration lists from the Gutenberg ls-R file.
         self.illustration_lists = dict()
+        file_list = open(self.file_list)
         for (gid, illustrations) in GutenbergIllustratedDataProvider.illustrations_from_file_list(
-                open(self.file_list)):
+            file_list):
             if gid not in self.illustration_lists:
                 self.illustration_lists[gid] = illustrations
+        file_list.close()
 
         self.uploader = S3Uploader()
 
@@ -144,17 +155,20 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
                 continue
             file_size = os.stat(path).st_size
             if file_size < self.IMAGE_CUTOFF_SIZE:
-                print "INFO: %s is only %d bytes, not using it." % (
-                    path, file_size)
+                #print "INFO: %s is only %d bytes, not using it." % (
+                #    path, file_size)
                 continue
             large_enough.append(i)
         return large_enough
 
     def process_edition(self, edition):
         data = GutenbergIllustratedDataProvider.data_for_edition(edition)
+        data_source = DataSource.lookup(
+            self._db, DataSource.GUTENBERG_COVER_GENERATOR)
 
         identifier_obj = edition.primary_identifier
         identifier = identifier_obj.identifier
+        print "[ILLUSTRATED]", identifier_obj
         if identifier not in self.illustration_lists:
             # No illustrations for this edition. Nothing to do.
             print "[ILLUSTRATED] No illustrations."
@@ -179,26 +193,36 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         data['illustrations'] = illustrations
         
         # Write the input to a temporary file.
-        fh, input_path = tempfile.mkstemp()
-        json.dump(data, open(input_path, "w"))
+        input_fh = tempfile.NamedTemporaryFile()
+        json.dump(data, input_fh)
+        input_fh.flush()
 
         # Make sure the output directory exists.
         if not os.path.exists(self.output_directory):
-                         os.makedirs(self.output_directory)
+            os.makedirs(self.output_directory)
 
-        args = self.args_for(input_path)
-        fh, output_capture_path = tempfile.mkstemp()
-        output_capture = open(output_capture_path, "w")
-        subprocess.call(args, stdout=output_capture)
+        args = self.args_for(input_fh.name)
+        output_fh = tempfile.NamedTemporaryFile()
+        try:
+            subprocess.call(args, stdout=output_fh)
+        except Exception, e:
+            raise OSError(
+                "Could not invoke subprocess %s. Original error: %s" % (
+                " ".join(args), str(e)))
 
-        # We're done with the input file. Remove it.
-        os.remove(input_path)
+        output_capture = open(output_fh.name)
+        print output_capture.read()
+        output_capture.close()
+
+        # We're done with the temporary files.
+        input_fh.close()
+        output_fh.close()
 
         # Associate 'cover' resources with the identifier
         output_directory = os.path.join(
             self.output_directory, identifier)
 
-        pool = get_one(
+        license_pool = get_one(
             self._db, LicensePool, identifier_id=identifier_obj.id)
         to_upload = []
         if os.path.exists(output_directory):
@@ -225,9 +249,11 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             url = self.uploader.cover_image_url(
                 data_source, identifier_obj, filename)
             link, new = license_pool.add_link(
-                Hyperlink.IMAGE, url, self.output_source)
-            link.resource.representation.set_fetched_content(None, path)
-            to_upload.append(link.resource.representation)
+                Hyperlink.IMAGE, url, self.output_source,
+                "image/png", None, path)
+            r = link.resource.representation
+            r.mirror_url = url
+            to_upload.append(r)
 
         self.uploader.mirror_batch(to_upload)
         print "[ILLUSTRATED] Uploaded %d resources." % len(to_upload)

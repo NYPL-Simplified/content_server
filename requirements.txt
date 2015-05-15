@@ -13,6 +13,7 @@ textblob
 rdflib
 elasticsearch
 python-dateutil
+uwsgi
 
 # Used only by content
 ebookmaker>=0.4.0a4

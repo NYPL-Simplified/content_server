@@ -17,14 +17,14 @@ from core.model import (
 class ContentServerAnnotator(VerboseAnnotator):
 
     @classmethod
-    def annotate_work_entry(cls, work, active_license_pool, edition, identifier, feed, entry, links):
+    def annotate_work_entry(cls, work, active_license_pool, edition, identifier, feed, entry):
         if not active_license_pool.open_access:
             return
 
         rel = OPDSFeed.OPEN_ACCESS_REL
         best_pool, best_link = active_license_pool.best_license_link
-        feed.add_link_to_entry(entry, rel=rel, href=best_link.final_url,
-                               type=best_link.media_type)
+        feed.add_link_to_entry(entry, rel=rel, href=best_link.representation.mirror_url,
+                               type=best_link.representation.media_type)
 
 
 class AllCoverLinksAnnotator(ContentServerAnnotator):
