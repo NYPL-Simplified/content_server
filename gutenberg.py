@@ -1,6 +1,7 @@
 import datetime
 import os
 import json
+import logging
 import random
 import re
 import random
@@ -75,6 +76,7 @@ class GutenbergAPI(object):
         self.source = DataSource.lookup(self._db, DataSource.GUTENBERG)
         self.data_directory = data_directory
         self.catalog_path = os.path.join(self.data_directory, self.FILENAME)
+        self.log = logging.getLogger("Gutenberg API")
 
     @classmethod
     def url_to_mirror_path(cls, url):
@@ -142,10 +144,10 @@ class GutenbergAPI(object):
         disk.
         """
         url = random.choice(self.MIRRORS)
-        print "Refreshing %s" % url
+        self.log.info("Refreshing %s", url)
         response = requests.get(url)
         if response.status_code == '403':
-            print "Request blocked by Gutenberg, not updating."
+            self.log.error("Request blocked by Gutenberg, not updating.")
             return
         tmp_path = self.catalog_path + ".tmp"
         open(tmp_path, "wb").write(response.content)
@@ -181,7 +183,7 @@ class GutenbergAPI(object):
         for pg_id, archive, archive_item in books:
             if subset is not None and not subset(pg_id, archive, archive_item):
                 continue
-            print "Considering %s" % pg_id
+            self.log.info("Considering %s" % pg_id)
             # Find an existing Edition for the book.
             book = Edition.for_foreign_id(
                 self._db, self.source, Identifier.GUTENBERG_ID, pg_id,
@@ -291,12 +293,12 @@ class GutenbergRDFExtractor(object):
                     raise ValueError(
                         "More than one book in file for Project Gutenberg ID %s" % pg_id)
                 else:
-                    print "WEIRD MULTI-TITLE: %s" % pg_id
+                    self.log.warn("WEIRD MULTI-TITLE: %s", pg_id)
 
             # TODO: Some titles such as 44244 have titles in multiple
             # languages. Not sure what to do about that.
             uri, ignore, title = title_triples[0]
-            print " Parsing book %s" % title.encode("utf8")
+            self.log.info("Parsing book %s", title)
             book, rights_status, new = cls.parse_book(_db, g, uri, title)
 
         else:

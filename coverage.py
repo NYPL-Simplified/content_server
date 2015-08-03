@@ -71,12 +71,14 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         epub_directory = os.path.join(
             self.epub_mirror, identifier.identifier)
         if not os.path.exists(epub_directory):
-            print "Expected EPUB directory %s does not exist!" % epub_directory
+            self.log.warn(
+                "Expected EPUB directory %s does not exist!", epub_directory)
             return None
         files = os.listdir(epub_directory)
         epub_filename = self.best_epub_in(files)
         if not epub_filename:
-            print "Could not find a good EPUB in %s!" % epub_directory
+            self.log.warn(
+                "Could not find a good EPUB in %s!", epub_directory)
             return None
         return os.path.join(epub_directory, epub_filename)
 
@@ -151,12 +153,13 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         for i in illustrations:
             path = os.path.join(self.gutenberg_mirror, i)
             if not os.path.exists(path):
-                print "ERROR: could not find illustration %s" % path
+                self.log.error("Could not find illustration %s", path)
                 continue
             file_size = os.stat(path).st_size
             if file_size < self.IMAGE_CUTOFF_SIZE:
-                #print "INFO: %s is only %d bytes, not using it." % (
-                #    path, file_size)
+                self.log.info(
+                    "%s is only %d bytes, not using it.", path, file_size
+                )
                 continue
             large_enough.append(i)
         return large_enough
@@ -168,10 +171,10 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
 
         identifier_obj = edition.primary_identifier
         identifier = identifier_obj.identifier
-        print "[ILLUSTRATED]", identifier_obj
+        self.log.info("Processing %r", identifier_obj)
         if identifier not in self.illustration_lists:
             # No illustrations for this edition. Nothing to do.
-            print "[ILLUSTRATED] No illustrations."
+            self.log.info("No illustrations for %r", identifier_obj)
             return True
 
         data['identifier'] = identifier
@@ -184,7 +187,8 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
 
         if not illustrations:
             # All illustrations were filtered out. Nothing to do.
-            print "[ILLUSTRATED] All illustrations filtered out."
+            self.log.info(
+                "All illustrations filtered out for %r", identifier_obj)
             return True
 
         # There is at least one cover available for this book.
@@ -211,7 +215,8 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
                 " ".join(args), str(e)))
 
         output_capture = open(output_fh.name)
-        print output_capture.read()
+        self.log.info(
+            "Output capture for %r: %r", identifier_obj, output_capture.read()
         output_capture.close()
 
         # We're done with the temporary files.
@@ -256,7 +261,8 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
             to_upload.append(r)
 
         self.uploader.mirror_batch(to_upload)
-        print "[ILLUSTRATED] Uploaded %d resources." % len(to_upload)
+        self.log.info(
+            "Uploaded %d covers for %r.", len(to_upload), identifier_obj)
         return True
 
     def args_for(self, input_path):
