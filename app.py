@@ -12,6 +12,7 @@ from core.model import (
     WorkFeed,
 )
 from core.opds import OPDSFeed
+from core.config import Configuration
 
 from sqlalchemy.orm.exc import (
     NoResultFound,
@@ -85,7 +86,8 @@ def lookup():
 
 if __name__ == '__main__':
     debug = True
-    url = os.environ['CONTENT_WEB_APP_URL']
+    url = Configuration.integration_url(
+        Configuration.CONTENT_SERVER_INTEGRATION, required=True)
     scheme, netloc, path, parameters, query, fragment = urlparse.urlparse(url)
     if ':' in netloc:
         host, port = netloc.split(':')

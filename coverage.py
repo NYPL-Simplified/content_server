@@ -5,6 +5,7 @@ import tempfile
 import urllib
 from nose.tools import set_trace
 from illustrated import GutenbergIllustratedDataProvider
+from core.config import Configuration
 from core.coverage import CoverageProvider
 from core.model import (
     get_one,
@@ -26,7 +27,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     """
 
     def __init__(self, _db, workset_size=5, mirror_uploader=S3Uploader):
-        data_directory = os.environ['DATA_DIRECTORY']
+        data_directory = Configuration.data_directory()
 
         self.gutenberg_mirror = os.path.join(
             data_directory, "Gutenberg", "gutenberg-mirror") + "/"
@@ -116,8 +117,9 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
     def __init__(self, _db, binary_path=None,
                  workset_size=5):
 
-        data_directory = os.environ['DATA_DIRECTORY']
-        binary_path = binary_path or os.environ['GUTENBERG_ILLUSTRATED_BINARY_PATH']
+        data_directory = Configuration.data_directory()
+        binary_path = binary_path or Configuration.required(
+            "gutenberg_illustrated_binary_path")
 
         self.gutenberg_mirror = os.path.join(
             data_directory, DataSource.GUTENBERG, "gutenberg-mirror") + "/"
@@ -217,6 +219,7 @@ class GutenbergIllustratedCoverageProvider(CoverageProvider):
         output_capture = open(output_fh.name)
         self.log.info(
             "Output capture for %r: %r", identifier_obj, output_capture.read()
+        )
         output_capture.close()
 
         # We're done with the temporary files.

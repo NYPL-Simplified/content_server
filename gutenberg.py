@@ -298,7 +298,7 @@ class GutenbergRDFExtractor(object):
             # TODO: Some titles such as 44244 have titles in multiple
             # languages. Not sure what to do about that.
             uri, ignore, title = title_triples[0]
-            self.log.info("Parsing book %s", title)
+            logging.info("Parsing book %s", title)
             book, rights_status, new = cls.parse_book(_db, g, uri, title)
 
         else:
