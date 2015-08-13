@@ -63,7 +63,7 @@ def feed():
 
     last_work_seen = None
 
-    feed = WorkFeed(languages, [Work.last_update_time, Work.id], False, WorkFeed.ALL)
+    feed = WorkFeed(languages, ['last_update', 'work_id'], False, WorkFeed.ALL)
     extra_filter = None
     if last_update_datetime:
         extra_filter = Work.last_update_time < last_update_datetime
