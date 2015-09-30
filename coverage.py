@@ -10,6 +10,7 @@ from core.coverage import CoverageProvider
 from core.model import (
     get_one,
     DataSource,
+    DeliveryMechanism,
     Edition,
     Hyperlink,
     Identifier,
@@ -63,6 +64,11 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         representation = link.resource.representation
         representation.mirror_url = url
         self.uploader.mirror_one(representation)
+
+        license_pool.set_delivery_mechanism(
+            Representation.EPUB_MEDIA_TYPE, DeliveryMechanism.NO_DRM, 
+            link.resource
+        )
         return True
 
     def epub_path_for(self, identifier):

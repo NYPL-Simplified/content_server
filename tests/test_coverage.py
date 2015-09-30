@@ -9,6 +9,7 @@ from ..core.testing import DatabaseTest
 from ..coverage import GutenbergEPUBCoverageProvider
 from ..core.s3 import DummyS3Uploader
 from ..core.model import (
+    DeliveryMechanism,
     Hyperlink,
     Representation,
     Resource,
@@ -48,6 +49,13 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         eq_(pool, link.license_pool)
         eq_(Hyperlink.OPEN_ACCESS_DOWNLOAD, link.rel)
         eq_(self.provider.output_source, link.data_source)
+
+        # The license pool has a distribution mechanism.
+        [lpm] = link.license_pool.delivery_mechanisms
+        mech = lpm.delivery_mechanism
+        eq_(mech.content_type, Representation.EPUB_MEDIA_TYPE)
+        eq_(mech.drm_scheme, DeliveryMechanism.NO_DRM)
+        eq_(lpm.resource, link.resource)
 
         resource = link.resource
         representation = resource.representation
