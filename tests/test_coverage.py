@@ -9,8 +9,10 @@ from ..core.testing import DatabaseTest
 from ..coverage import GutenbergEPUBCoverageProvider
 from ..core.s3 import DummyS3Uploader
 from ..core.model import (
+    get_one_or_create,
     DeliveryMechanism,
     Hyperlink,
+    LicensePool,
     Representation,
     Resource,
 )
@@ -31,10 +33,14 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
             self._db, mirror_uploader=DummyS3Uploader)
 
     def test_process_edition_success(self):
-        edition, pool = self._edition(with_license_pool=True)
-
+        edition = self._edition()
         now = datetime.datetime.now()
-
+        pool, ignore = get_one_or_create(
+            self._db, LicensePool, edition=edition,
+            identifier=edition.primary_identifier,
+            open_access=True
+        )
+        
         eq_(True, self.provider.process_edition(edition))
 
         # Something was 'uploaded' to S3.
