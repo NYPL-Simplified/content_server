@@ -34,6 +34,17 @@ from core.model import (
     Identifier,
     LicensePool,
     Subject,
+    DeliveryMechanism,
+)
+
+from core.metadata_layer import (
+    ContributorData,
+    Metadata,
+    LinkData,
+    IdentifierData,
+    FormatData,
+    MeasurementData,
+    SubjectData,
 )
 
 from core.monitor import Monitor
@@ -314,6 +325,10 @@ class GutenbergRDFExtractor(object):
         `title`.
         """
         source_id = unicode(cls.ID_IN_URI.search(uri).groups()[0])
+        primary_identifier = IdentifierData(
+            Identifier.GUTENBERG_ID, source_id
+        )
+
         # Split a subtitle out from the main title.
         title = unicode(title)
         subtitle = None
@@ -366,36 +381,19 @@ class GutenbergRDFExtractor(object):
         for ignore, ignore, author_uri in g.triples((uri, cls.dcterms.creator, None)):
             name = cls._value(g, (author_uri, cls.gutenberg.name, None))
             aliases = cls._values(g, (author_uri, cls.gutenberg.alias, None))
-            matches, new = Contributor.lookup(_db, name, aliases=aliases)
-            contributor = matches[0]
-            contributors.append(contributor)
+            contributors.append(ContributorData(
+                sort_name=name,
+                aliases=aliases,
+                roles=[Contributor.AUTHOR_ROLE],
+            ))
 
-        # Create or fetch a Edition for this book.
-        source = DataSource.lookup(_db, DataSource.GUTENBERG)
-        identifier, new = Identifier.for_foreign_id(
-            _db, Identifier.GUTENBERG_ID, source_id)
-        book, new = get_one_or_create(
-            _db, Edition,
-            create_method_kwargs=dict(
-                title=title,
-                subtitle=subtitle,
-                issued=issued,
-                publisher=publisher,
-                language=language,
-            ),
-            data_source=source,
-            primary_identifier=identifier,
-        )
-
-        # Classify the Edition.
-        if new:
-            subject_links = cls._values(g, (uri, cls.dcterms.subject, None))
-            for subject in subject_links:
-                value = cls._value(g, (subject, cls.rdf.value, None))
-                vocabulary = cls._value(g, (subject, cls.dcam.memberOf, None))
-                vocabulary = Subject.by_uri[str(vocabulary)]
-                identifier.classify(source, vocabulary, value)
-
+        subjects = []
+        subject_links = cls._values(g, (uri, cls.dcterms.subject, None))
+        for subject in subject_links:
+            value = cls._value(g, (subject, cls.rdf.value, None))
+            vocabulary = cls._value(g, (subject, cls.dcam.memberOf, None))
+            vocabulary = Subject.by_uri[str(vocabulary)]
+            subjects.append(SubjectData(vocabulary, value))
 
         medium = Edition.BOOK_MEDIUM
 
@@ -403,12 +401,16 @@ class GutenbergRDFExtractor(object):
         # with the new Edition. They will serve either as open access
         # downloads or cover images.
         download_links = cls._values(g, (uri, cls.dcterms.hasFormat, None))
-        identifier.add_link(Hyperlink.CANONICAL, str(uri), source)
+        links = [LinkData(
+            rel=Hyperlink.CANONICAL,
+            href=str(uri),
+        )]
 
         # Gutenberg won't allow us to use any of the download or image
         # links--we have to make our own from an rsynced mirror--but
         # we can look through the links to determine which medium to
         # assign to this book.
+        formats = []
         for href in download_links:
             for format_uri in cls._values(
                     g, (href, cls.dcterms['format'], None)):
@@ -416,15 +418,35 @@ class GutenbergRDFExtractor(object):
                     cls._value(g, (format_uri, cls.rdf.value, None)))
                 if media_type.startswith('audio/'):
                     medium = Edition.AUDIO_MEDIUM
+                    formats.append(FormatData(
+                        content_type=Representation.MP3_MEDIA_TYPE,
+                        drm_scheme=DeliveryMechanism.NO_DRM,
+                    ))
                 elif media_type.startswith('video/'):
                     medium = Edition.VIDEO_MEDIUM
-        book.no_known_cover = True
-        book.medium = medium
+                else:
+                    formats.append(FormatData(
+                        content_type=Representation.EPUB_MEDIA_TYPE,
+                        drm_scheme=DeliveryMechanism.NO_DRM,
+                    ))
 
-        # Associate the appropriate contributors with the book.
-        for contributor in contributors:
-            book.add_contributor(contributor, Contributor.AUTHOR_ROLE)
-        return book, rights_uri, new
+        metadata = Metadata(
+            data_source=DataSource.GUTENBERG,
+            book_data_source=DataSource.GUTENBERG,
+            title=title,
+            subtitle=subtitle,
+            language=language,
+            publisher=publisher,
+            issued=issued,
+            medium=medium,
+            primary_identifier=primary_identifier,
+            subjects=subjects,
+            contributors=contributors,
+            formats=formats,
+            links=links,
+        )
+        edition, new = metadata.edition(_db)
+        return edition, rights_uri, new
 
 
 class GutenbergMonitor(Monitor):
