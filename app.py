@@ -5,7 +5,7 @@ from functools import wraps
 
 from core.util.problem_detail import ProblemDetail
 from core.util.flask_util import problem
-from core.config import Configuration
+from config import Configuration
 from controller import ContentServer
 
 import flask

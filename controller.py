@@ -6,7 +6,7 @@ from core.util.flask_util import languages_for_request
 
 from problem_details import *
 
-from core.config import (
+from config import (
     Configuration,
     CannotLoadConfiguration,
 )

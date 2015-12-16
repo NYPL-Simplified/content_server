@@ -5,7 +5,7 @@ import tempfile
 import urllib
 from nose.tools import set_trace
 from illustrated import GutenbergIllustratedDataProvider
-from core.config import Configuration
+from config import Configuration
 from core.coverage import CoverageProvider
 from core.model import (
     get_one,
