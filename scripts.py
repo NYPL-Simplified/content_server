@@ -163,7 +163,7 @@ class DirectoryImportScript(Script):
                 )
 
                 subjects = [SubjectData(
-                    Classifier.LCSH,
+                    Classifier.FAST,
                     subject['a'],
                 ) for subject in record.subjects()]
 
@@ -224,6 +224,9 @@ class DirectoryImportScript(Script):
                 )
                 license_pool, new = metadata.license_pool(self._db)
                 edition, new = metadata.edition(self._db)
+                work, new = license_pool.calculate_work(known_edition=edition)
+                work.presentation_ready = True
+
                 if new:
                     print "created new edition %s" % edition.title
                 
@@ -231,4 +234,6 @@ class DirectoryImportScript(Script):
                     representation = link.resource.representation
                     representation.mirror_url = link.resource.url
                     representation.local_content_path = paths[link.resource.url]
-                    uploader.mirror_one(representation)                    
+                    uploader.mirror_one(representation)   
+
+                self._db.commit()
