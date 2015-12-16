@@ -2,6 +2,7 @@ from collections import defaultdict
 from nose.tools import set_trace
 from flask import url_for
 
+from core.app_server import cdn_url_for
 from core.opds import (
     VerboseAnnotator,
     AcquisitionFeed,
@@ -12,9 +13,12 @@ from core.model import (
     Resource,
     Session,
     Subject,
+    Work,
 )
 
 class ContentServerAnnotator(VerboseAnnotator):
+
+    opds_cache_field = Work.simple_opds_entry.name
 
     @classmethod
     def annotate_work_entry(cls, work, active_license_pool, edition, identifier, feed, entry):
@@ -28,6 +32,19 @@ class ContentServerAnnotator(VerboseAnnotator):
             type=best_link.representation.media_type,
         )
 
+    @classmethod
+    def home_url(cls):
+        return cdn_url_for("feed", _external=True)
+
+    def feed_url(self, lane, facets, pagination):
+        kwargs = dict(facets.items())
+        kwargs.update(dict(pagination.items()))
+        return cdn_url_for(
+            "feed", lane_name=lane.name, languages=lane.languages, _external=True, **kwargs)
+
+    @classmethod
+    def default_lane_url(cls):
+        return cls.home_url()
 
 class AllCoverLinksAnnotator(ContentServerAnnotator):
 
