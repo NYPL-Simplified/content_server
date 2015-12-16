@@ -1,0 +1,11 @@
+#!/usr/bin/env python
+"""Update the content server with new books from Plympton."""
+import os
+import sys
+bin_dir = os.path.split(__file__)[0]
+package_dir = os.path.join(bin_dir, "..", "..")
+sys.path.append(os.path.abspath(package_dir))
+if len(sys.argv) < 3:
+    raise Exception("Two arguments required: directory and data source name")
+from content.scripts import DirectoryImportScript
+DirectoryImportScript().run(sys.argv[1], sys.argv[2])
