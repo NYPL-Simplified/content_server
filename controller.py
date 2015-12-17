@@ -140,9 +140,7 @@ class ContentServerController(object):
 class OPDSFeedController(ContentServerController):
     
     def feed(self):
-        languages = languages_for_request()
-        lane = Lane(self._db, "All books",
-                    languages=languages)
+        lane = Lane(self._db, "All books")
         
         url = url_for("feed", _external=True)
 
