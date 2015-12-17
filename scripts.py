@@ -1,7 +1,4 @@
 import os
-import datetime
-datetime.datetime.strptime("2015","%Y")
-from pymarc import MARCReader
 from core.scripts import Script
 from monitor import GutenbergMonitor
 from coverage import (
@@ -10,12 +7,8 @@ from coverage import (
 )
 from core.model import (
     LicensePool,
-    DataSource,
-    Edition,
-    Identifier,
     Representation,
     DeliveryMechanism,
-    Contributor,
     Hyperlink,
     get_one,
 )
@@ -23,15 +16,11 @@ from core.classifier import Classifier
 from core.monitor import PresentationReadyMonitor
 
 from core.metadata_layer import (
-    ContributorData,
-    Metadata,
     LinkData,
-    IdentifierData,
     FormatData,
-    MeasurementData,
-    SubjectData,
 )
 from core.s3 import S3Uploader
+from marc import MARCExtractor
 
 
 class GutenbergMonitorScript(Script):
@@ -150,28 +139,10 @@ class DirectoryImportScript(Script):
 
         # Extract metadata for each book
         with open(metadata_file) as f:
-            reader = MARCReader(f)
-            for record in reader:
-                title = record.title()
-                issued_year = datetime.datetime.strptime(record.pubyear(), "%Y.")
-                publisher = record.publisher()
-                summary = record.notes()[0]['a']
-
-                isbn = record['020']['a'].split(" ")[0]
-                primary_identifier = IdentifierData(
-                    Identifier.ISBN, isbn
-                )
-
-                subjects = [SubjectData(
-                    Classifier.FAST,
-                    subject['a'],
-                ) for subject in record.subjects()]
-
-                author = record.author()
-                contributors = [ContributorData(
-                    sort_name=author,
-                    roles=[Contributor.AUTHOR_ROLE],
-                )]
+            metadata_records = MARCExtractor().parse(f, data_source_name)
+            for metadata in metadata_records:
+                primary_identifier = metadata.primary_identifier
+                isbn = primary_identifier.identifier
                 
                 uploader = S3Uploader()
                 links = []
@@ -207,21 +178,9 @@ class DirectoryImportScript(Script):
                     media_type=Representation.JPEG_MEDIA_TYPE,
                 ))
 
-            
-                metadata = Metadata(
-                    data_source=data_source_name,
-                    book_data_source=data_source_name,
-                    title=title,
-                    language='eng',
-                    medium=Edition.BOOK_MEDIUM,
-                    publisher=publisher,
-                    issued=issued_year,
-                    primary_identifier=primary_identifier,
-                    subjects=subjects,
-                    contributors=contributors,
-                    formats=formats,
-                    links=links,
-                )
+                metadata.links = links
+                metadata.formats = formats
+
                 license_pool, new = metadata.license_pool(self._db)
                 edition, new = metadata.edition(self._db)
                 work, new = license_pool.calculate_work(known_edition=edition)
