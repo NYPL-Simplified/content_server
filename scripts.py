@@ -21,7 +21,7 @@ from core.metadata_layer import (
 )
 from core.s3 import S3Uploader
 from marc import MARCExtractor
-
+from nose.tools import set_trace
 
 class GutenbergMonitorScript(Script):
 
@@ -143,10 +143,8 @@ class DirectoryImportScript(Script):
             for metadata in metadata_records:
                 primary_identifier = metadata.primary_identifier
                 isbn = primary_identifier.identifier
-                
-                uploader = S3Uploader()
-                links = []
 
+                uploader = S3Uploader()
                 paths = dict()
 
                 url = uploader.book_url(primary_identifier, "epub")
@@ -164,7 +162,7 @@ class DirectoryImportScript(Script):
                     drm_scheme=DeliveryMechanism.NO_DRM,
                     link=epub_link,
                 )]
-                links.append(epub_link)
+                metadata.links.append(epub_link)
 
                 cover_file = isbn + ".jpg"
                 cover_url = uploader.cover_image_url(
@@ -172,13 +170,12 @@ class DirectoryImportScript(Script):
                 cover_path = os.path.join(directory, cover_file)
                 paths[cover_url] = cover_path
 
-                links.append(LinkData(
+                metadata.links.append(LinkData(
                     rel=Hyperlink.IMAGE,
                     href=cover_url,
                     media_type=Representation.JPEG_MEDIA_TYPE,
                 ))
 
-                metadata.links = links
                 metadata.formats = formats
 
                 license_pool, new = metadata.license_pool(self._db)
