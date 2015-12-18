@@ -1,0 +1,1 @@
+UPDATE licensepools SET availability_time = last_checked WHERE availability_time IS NULL;
