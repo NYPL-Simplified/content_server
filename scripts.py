@@ -181,8 +181,11 @@ class DirectoryImportScript(Script):
                 metadata.links = links
                 metadata.formats = formats
 
-                license_pool, new = metadata.license_pool(self._db)
+                license_pool, new_license_pool = metadata.license_pool(self._db)
                 edition, new = metadata.edition(self._db)
+                if new_license_pool:
+                    license_pool.edition = edition
+
                 work, new = license_pool.calculate_work(known_edition=edition)
                 work.presentation_ready = True
 
