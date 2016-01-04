@@ -4,7 +4,7 @@ import sys
 import flask
 from core.util.flask_util import languages_for_request
 
-from problem_details import *
+from core.problem_details import *
 
 from config import (
     Configuration,
