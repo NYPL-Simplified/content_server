@@ -39,3 +39,6 @@ class TestMARCExtractor(object):
         eq_(Edition.BOOK_MEDIUM, record.medium)
         eq_(2015, record.issued.year)
         eq_('eng', record.language)
+
+        eq_(1, len(record.links))
+        assert "Utterson and Enfield are worried about their friend" in record.links[0].content
