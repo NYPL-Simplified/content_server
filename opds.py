@@ -33,7 +33,7 @@ class ContentServerAnnotator(VerboseAnnotator):
         )
 
     @classmethod
-    def home_url(cls):
+    def default_lane_url(cls):
         return cdn_url_for("feed", _external=True)
 
     def feed_url(self, lane, facets, pagination):
@@ -41,10 +41,6 @@ class ContentServerAnnotator(VerboseAnnotator):
         kwargs.update(dict(pagination.items()))
         return cdn_url_for(
             "feed", lane_name=lane.name, languages=lane.languages, _external=True, **kwargs)
-
-    @classmethod
-    def default_lane_url(cls):
-        return cls.home_url()
 
 class AllCoverLinksAnnotator(ContentServerAnnotator):
 
