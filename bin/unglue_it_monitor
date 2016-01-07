@@ -8,4 +8,4 @@ sys.path.append(os.path.abspath(package_dir))
 from core.scripts import OPDSImportScript
 from opds_import import ContentOPDSImporter
 from core.model import DataSource
-OPDSImportScript("https://unglue.it/api/opds/epub/?order_by=newest&page=102", DataSource.UNGLUE_IT, ContentOPDSImporter).run()
+OPDSImportScript("https://unglue.it/api/opds/epub/", DataSource.UNGLUE_IT, ContentOPDSImporter).run()
