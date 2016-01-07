@@ -25,22 +25,6 @@ from . import DatabaseTest
 
 class TestGutenbergAPI(DatabaseTest):
 
-    def test_pg_license_is_open_access(self):
-
-        gutenberg = DataSource.lookup(self._db, DataSource.GUTENBERG)
-        identifier, ignore = get_one_or_create(
-            self._db, Identifier, type=Identifier.GUTENBERG_ID,
-            identifier="17")        
-        edition, new = Edition.for_foreign_id(
-            self._db, DataSource.GUTENBERG, Identifier.GUTENBERG_ID, "1")
-        eq_(True, new)
-
-        license, new = GutenbergAPI.pg_license_for(
-            self._db, edition, RightsStatus.PUBLIC_DOMAIN_USA)
-        eq_(True, new)
-        eq_(True, license.open_access)
-        eq_(RightsStatus.PUBLIC_DOMAIN_USA, license.rights_status.uri)
-
     def test_url_to_mirror_path(self):
 
         original = GutenbergAPI.GUTENBERG_ORIGINAL_MIRROR
@@ -74,7 +58,7 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
     def test_rdf_parser(self):
         """Parse RDF into a Edition."""
         fh = StringIO.StringIO(self.sample_data("gutenberg-17.rdf"))
-        book, rights_uri, new = GutenbergRDFExtractor.book_in(self._db, "17", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "17", fh)
 
         # Verify that the Edition is hooked up to the correct
         # DataSource and Identifier.
@@ -124,20 +108,18 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
              u'Mormon Church -- Sacred books'], 
             sorted(x.identifier for x in lcsh))
 
-        eq_(RightsStatus.PUBLIC_DOMAIN_USA, rights_uri)
-        pool, new = GutenbergAPI.pg_license_for(self._db, book, rights_uri)
-        eq_(True, pool.open_access)
         eq_(RightsStatus.PUBLIC_DOMAIN_USA, pool.rights_status.uri)
+        eq_(True, pool.open_access)
 
     def test_unicode_characters_in_title(self):
         fh = StringIO.StringIO(self.sample_data("gutenberg-10130.rdf"))
-        book, rights_uri, new = GutenbergRDFExtractor.book_in(self._db, "10130", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "10130", fh)
         eq_(u"The Works of Charles and Mary Lamb — Volume 3", book.title)
         eq_("Books for Children", book.subtitle)
 
     def test_includes_cover_image(self):
         fh = StringIO.StringIO(self.sample_data("gutenberg-40993.rdf"))
-        book, rights_uri, new = GutenbergRDFExtractor.book_in(self._db, "40993", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "40993", fh)
 
         identifier = book.primary_identifier
 
@@ -149,14 +131,14 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
         """GutenbergRDFExtractor can handle an RDF document that doesn't
         describe any books."""
         fh = StringIO.StringIO(self.sample_data("gutenberg-0.rdf"))
-        book, rights_uri, new = GutenbergRDFExtractor.book_in(self._db, "0", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "0", fh)
         eq_(None, book)
         eq_(False, new)
 
     def test_audio_book(self):
         """An audio book is loaded with its medium set to AUDIO."""
         fh = StringIO.StringIO(self.sample_data("pg28794.rdf"))
-        book, rights_uri, new = GutenbergRDFExtractor.book_in(self._db, "28794", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "28794", fh)
         eq_(Edition.AUDIO_MEDIUM, book.medium)
 
 
@@ -165,9 +147,7 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
         be treated as 'in copyright' rather than as an open access book.
         """
         fh = StringIO.StringIO(self.sample_data("pg16.rdf"))
-        book, rights_uri, new = GutenbergRDFExtractor.book_in(self._db, "16", fh)
-        eq_(RightsStatus.IN_COPYRIGHT, rights_uri)
-
-        pool, new = GutenbergAPI.pg_license_for(self._db, book, rights_uri)
+        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "16", fh)
+        eq_(RightsStatus.IN_COPYRIGHT, pool.rights_status.uri)
         eq_(False, pool.open_access)
-        eq_(rights_uri, pool.rights_status.uri)
+

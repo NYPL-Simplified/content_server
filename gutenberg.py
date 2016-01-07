@@ -206,44 +206,13 @@ class GutenbergAPI(object):
                 fh = archive.extractfile(archive_item)
                 data = fh.read()
                 fake_fh = StringIO(data)
-                book, rights_uri, new = GutenbergRDFExtractor.book_in(
+                book, license, new = GutenbergRDFExtractor.book_in(
                     self._db, pg_id, fake_fh)
 
-                if book:
-                    # Ensure that an open-access LicensePool exists for this book.
-                    license, new = self.pg_license_for(
-                        self._db, book, rights_uri)
-                
-                    license.calculate_work()
-
+                if book and license:
                     yield (book, license)
 
 
-    @classmethod
-    def pg_license_for(cls, _db, edition, rights_uri):
-        """Retrieve a LicensePool for the given Project Gutenberg work,
-        creating it (but not committing it) if necessary.
-        """
-
-        # The only Project Gutenberg books we can obviously use are
-        # the ones that are public domain in the USA. All other books
-        # will initially be marked as not open access. This will
-        # change we get more detailed information about the status of
-        # individual books.
-        open_access = (rights_uri == RightsStatus.PUBLIC_DOMAIN_USA)
-
-        pool, new = get_one_or_create(
-            _db, LicensePool,
-            data_source=edition.data_source,
-            identifier=edition.primary_identifier,
-            create_method_kwargs=dict(
-                open_access=open_access,
-                last_checked=datetime.datetime.now(),
-            )
-        )
-        pool.set_rights_status(rights_uri)
-        return pool, new
- 
 class GutenbergRDFExtractor(object):
 
     """Transform a Project Gutenberg RDF description of a title into a
@@ -310,14 +279,14 @@ class GutenbergRDFExtractor(object):
             # languages. Not sure what to do about that.
             uri, ignore, title = title_triples[0]
             logging.info("Parsing book %s", title)
-            book, rights_status, new = cls.parse_book(_db, g, uri, title)
+            book, license, new = cls.parse_book(_db, g, uri, title)
 
         else:
             book = None
-            rights_status = None
+            license = None
             new = False
 
-        return book, rights_status, new
+        return book, license, new
 
     @classmethod
     def parse_book(cls, _db, g, uri, title):
@@ -347,14 +316,7 @@ class GutenbergRDFExtractor(object):
             rights = str(rights)
         else:
             rights = ''
-        if rights == 'Public domain in the USA.':
-            rights_uri = RightsStatus.PUBLIC_DOMAIN_USA
-        elif rights.startswith('Public domain'):
-            rights_uri = RightsStatus.PUBLIC_DOMAIN_UNKNOWN
-        elif rights.startswith('Copyrighted.'):
-            rights_uri = RightsStatus.IN_COPYRIGHT
-        else:
-            rights_uri = RightsStatus.UNKNOWN
+        rights_uri = RightsStatus.rights_uri_from_string(rights)
 
         # As far as I can tell, Gutenberg descriptions are 100%
         # useless for our purposes. They should not be used, even if
@@ -444,10 +406,18 @@ class GutenbergRDFExtractor(object):
             contributors=contributors,
             formats=formats,
             links=links,
+            rights_uri=rights_uri,
         )
         edition, new = metadata.edition(_db)
         metadata.apply(edition)
-        return edition, rights_uri, new
+
+        # Ensure that an open-access LicensePool exists for this book.
+        license_pool, new_license_pool = metadata.license_pool(_db)
+        if new_license_pool:
+            license_pool.edition = edition
+        license_pool.calculate_work(known_edition=edition)
+
+        return edition, license_pool, new
 
 
 class GutenbergMonitor(Monitor):
