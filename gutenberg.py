@@ -432,7 +432,7 @@ class GutenbergRDFExtractor(object):
 
         metadata = Metadata(
             data_source=DataSource.GUTENBERG,
-            book_data_source=DataSource.GUTENBERG,
+            license_data_source=DataSource.GUTENBERG,
             title=title,
             subtitle=subtitle,
             language=language,
@@ -446,6 +446,7 @@ class GutenbergRDFExtractor(object):
             links=links,
         )
         edition, new = metadata.edition(_db)
+        metadata.apply(edition)
         return edition, rights_uri, new
 
 
