@@ -178,7 +178,6 @@ class DirectoryImportScript(Script):
                 ))
 
                 metadata.formats = formats
-                metadata.rights_uri = RightsStatus.PUBLIC_DOMAIN_USA
 
                 license_pool, new_license_pool = metadata.license_pool(self._db)
                 edition, new = metadata.edition(self._db)
