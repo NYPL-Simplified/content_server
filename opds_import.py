@@ -44,6 +44,7 @@ class ContentOPDSImporter(OPDSImporter):
                         edition.work.set_presentation_ready()
                     except IOError as e:
                         print "Unable to mirror %s" % original_url
+                        representation.mirror_exception = str(e)
                         representation.mirror_url = None
 
         return imported, messages, next_links
