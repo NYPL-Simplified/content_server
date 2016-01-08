@@ -26,7 +26,7 @@ class ContentOPDSImporter(OPDSImporter):
 
                 mirror_url = None
                 if media_type in Representation.SUPPORTED_BOOK_MEDIA_TYPES:
-                    mirror_url = uploader.book_url(edition.primary_identifier, "epub")
+                    mirror_url = uploader.book_url(edition.primary_identifier, extension="epub", title=edition.title)
                 elif link.rel == Hyperlink.THUMBNAIL_IMAGE or link.rel == Hyperlink.IMAGE:
                     data_source = DataSource.lookup(self._db, self.data_source_name)
                     mirror_url = uploader.cover_image_url(data_source, edition.primary_identifier, original_url.split("/")[-1])
