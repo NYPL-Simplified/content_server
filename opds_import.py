@@ -25,7 +25,7 @@ class ContentOPDSImporter(OPDSImporter):
                 original_url = link.resource.url
 
                 mirror_url = None
-                if media_type in Representation.SUPPORTED_BOOK_MEDIA_TYPES:
+                if media_type in Representation.BOOK_MEDIA_TYPES:
                     extension = Representation.FILE_EXTENSIONS.get(media_type)
                     mirror_url = uploader.book_url(edition.primary_identifier, extension=extension, title=edition.title)
                 elif link.rel == Hyperlink.THUMBNAIL_IMAGE or link.rel == Hyperlink.IMAGE:
@@ -63,7 +63,7 @@ class UnglueItOPDSImporter(ContentOPDSImporter):
             other_links = []
             
             for link in metadata_obj.links:
-                if link.media_type in Representation.SUPPORTED_BOOK_MEDIA_TYPES:
+                if link.media_type in Representation.BOOK_MEDIA_TYPES:
                     book_links.append(deepcopy(link))
                 else:
                     other_links.append(deepcopy(link))
