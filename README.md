@@ -29,7 +29,7 @@ $ sudo -u postgres psql
 CREATE DATABASE simplified_content_test;
 CREATE DATABASE simplified_content_dev;
 
-n
+# Create users, unless you've already created them for another LS project
 CREATE USER simplified with password '[password]';
 CREATE USER simplified_test with password '[password]';
 
