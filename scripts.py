@@ -10,6 +10,7 @@ from core.model import (
     Representation,
     DeliveryMechanism,
     Hyperlink,
+    RightsStatus,
     get_one,
 )
 from core.classifier import Classifier
@@ -180,6 +181,7 @@ class DirectoryImportScript(Script):
 
                 license_pool, new_license_pool = metadata.license_pool(self._db)
                 edition, new = metadata.edition(self._db)
+                metadata.apply(edition)
                 if new_license_pool:
                     license_pool.edition = edition
 
@@ -188,11 +190,11 @@ class DirectoryImportScript(Script):
 
                 if new:
                     print "created new edition %s" % edition.title
-                
                 for link in edition.primary_identifier.links:
-                    representation = link.resource.representation
-                    representation.mirror_url = link.resource.url
-                    representation.local_content_path = paths[link.resource.url]
-                    uploader.mirror_one(representation)   
+                    if "description" not in link.rel:
+                        representation = link.resource.representation
+                        representation.mirror_url = link.resource.url
+                        representation.local_content_path = paths[link.resource.url]
+                        uploader.mirror_one(representation)   
 
                 self._db.commit()
