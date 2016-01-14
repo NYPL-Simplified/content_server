@@ -30,10 +30,14 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     def __init__(self, _db, workset_size=5, mirror_uploader=S3Uploader):
         data_directory = Configuration.data_directory()
 
-        self.gutenberg_mirror = os.path.join(
-            data_directory, "Gutenberg", "gutenberg-mirror") + "/"
-        self.epub_mirror = os.path.join(
-            data_directory, "Gutenberg", "gutenberg-epub") + "/"
+        if data_directory:
+            self.gutenberg_mirror = os.path.join(
+                data_directory, "Gutenberg", "gutenberg-mirror") + "/"
+            self.epub_mirror = os.path.join(
+                data_directory, "Gutenberg", "gutenberg-epub") + "/"
+        else:
+            self.gutenberg_mirror = None
+            self.epub_mirror = None
 
         input_source = DataSource.lookup(_db, DataSource.GUTENBERG)
         self.output_source = DataSource.lookup(
