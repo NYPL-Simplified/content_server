@@ -84,3 +84,22 @@ class TestFeedController(ControllerTest):
             assert 'after=1' in next_link
             assert 'size=1' in next_link
             assert 'order=title' in next_link
+
+    def test_verbose_opds_entry(self):
+        engdahl, new_contributor = self._contributor(
+            name = u"Sylvia Engdahl",
+            family_name = u"Engdahl",
+            wikipedia_name = u"Sylvia_Louise_Engdahl"
+        )
+        self.english_1.primary_edition.add_contributor(engdahl, "Author")
+        self.english_1.calculate_opds_entries(verbose=False)
+        SessionManager.refresh_materialized_views(self._db)
+
+
+        assert "family_name" not in self.english_1.simple_opds_entry
+        assert "Louise" not in self.english_1.simple_opds_entry
+
+        with self.app.test_request_context("/"):
+            response = self.content_server.opds_feeds.feed()
+            assert "family_name" in response.data
+            assert "Sylvia_Louise_Engdahl" in response.data
