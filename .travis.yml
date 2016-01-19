@@ -4,21 +4,28 @@ addons:
 services:
   - postgresql
 
-before_script:
-  - psql -c 'create role simplified_test;' -U postgres
-  - psql -c 'create database simplified_content_test;' -U postgres
-  - psql -c 'grant all privileges on database simplified_content_test to simplified_test;' -U postgres
-
 language: python
 
 python:
   - "2.7"
 
+cache: pip
+
+git:
+  submodules: false
+
+before_install:
+  - echo -e "machine github.com\n  login simplified-bot\n  password $CI_USER_PASSWORD" >> ~/.netrc
+  - git submodule update --init --recursive
+
 install:
-  - git submodule init
-  - git submodule update
   - pip install -r requirements.txt
   - cp config.json.sample config.json
   - export SIMPLIFIED_CONFIGURATION_FILE="$TRAVIS_BUILD_DIR/config.json"
+
+before_script:
+  - psql -c 'create user simplified_test;' -U postgres
+  - psql -c 'create database simplified_content_test;' -U postgres
+  - psql -c 'grant all privileges on database simplified_content_test to simplified_test;' -U postgres
 
 script: ./test
