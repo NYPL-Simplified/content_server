@@ -1,6 +1,7 @@
 from collections import defaultdict
 from nose.tools import set_trace
 from flask import url_for
+from sqlalchemy.orm import lazyload
 
 from core.app_server import cdn_url_for
 from core.opds import (
@@ -14,7 +15,10 @@ from core.model import (
     Session,
     Subject,
     Work,
+    Edition,
+    LicensePool,
 )
+from config import Configuration
 
 class ContentServerAnnotator(VerboseAnnotator):
 
@@ -61,3 +65,40 @@ class AllCoverLinksAnnotator(ContentServerAnnotator):
             if cover.scaled_path:
                 thumbnails.append(cover.scaled_path)
         return thumbnails, full
+
+
+class PreloadFeed(AcquisitionFeed):
+
+    @classmethod
+    def page(cls, _db, title, url, annotator=None,
+             use_materialized_works=True):
+
+        """Create a feed of content to preload on devices."""
+        configured_content = Configuration.get(Configuration.PRELOADED_CONTENT)
+
+        identifiers = [Identifier.parse_urn(_db, urn)[0] for urn in configured_content]
+        identifier_ids = [identifier.id for identifier in identifiers]
+
+        if use_materialized_works:
+            from core.model import MaterializedWork
+            q = _db.query(MaterializedWork)
+            q = q.filter(MaterializedWork.primary_identifier_id.in_(identifier_ids))
+
+            # Avoid eager loading of objects that are contained in the 
+            # materialized view.
+            q = q.options(
+                lazyload(MaterializedWork.license_pool, LicensePool.data_source),
+                lazyload(MaterializedWork.license_pool, LicensePool.identifier),
+                lazyload(MaterializedWork.license_pool, LicensePool.edition),
+            )
+        else:
+            q = _db.query(Work).join(Work.primary_edition)
+            q = q.filter(Edition.primary_identifier_id.in_(identifier_ids))
+
+        works = q.all()
+        feed = cls(_db, title, url, works, annotator)
+
+        annotator.annotate_feed(feed, None)
+        content = unicode(feed)
+        return content
+                     

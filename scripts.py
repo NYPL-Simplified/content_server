@@ -181,7 +181,7 @@ class DirectoryImportScript(Script):
 
                 license_pool, new_license_pool = metadata.license_pool(self._db)
                 edition, new = metadata.edition(self._db)
-                metadata.apply(edition)
+                metadata.apply(edition, replace_rights=True, replace_links=True)
                 if new_license_pool:
                     license_pool.edition = edition
 

@@ -27,3 +27,10 @@ class Configuration(CoreConfiguration):
         Facets.AVAILABILITY_FACET_GROUP_NAME : Facets.AVAILABLE_OPEN_ACCESS,
         Facets.COLLECTION_FACET_GROUP_NAME : Facets.COLLECTION_FULL,
     }
+
+    PRELOADED_CONTENT = 'preloaded_content'
+
+@contextlib.contextmanager
+def temp_config(new_config=None):
+    with core_temp_config(new_config, [CoreConfiguration, Configuration]) as i:
+        yield i
