@@ -31,7 +31,10 @@ from core.lane import (
     Pagination,
 )
 from core.opds import AcquisitionFeed
-from opds import ContentServerAnnotator
+from opds import (
+    ContentServerAnnotator,
+    PreloadFeed,
+)
 
 
 class ContentServer(object):
@@ -86,3 +89,13 @@ class OPDSFeedController(ContentServerController):
             pagination=load_pagination_from_request()
         )
         return feed_response(opds_feed.content) 
+
+    def preload(self):
+        url = url_for("preload", _external=True)
+
+        opds_feed = PreloadFeed.page(
+            self._db, "Content to Preload", url,
+            annotator=self.annotator(),
+        )
+        return feed_response(opds_feed)
+        

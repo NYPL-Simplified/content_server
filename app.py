@@ -45,6 +45,11 @@ def returns_problem_detail(f):
 def feed():
     return app.content_server.opds_feeds.feed()
 
+@app.route('/preload')
+@returns_problem_detail
+def preload():
+    return app.content_server.opds_feeds.preload()
+
 @app.route('/lookup')
 def lookup():
     return URNLookupController(app.content_server._db).work_lookup(ContentServerAnnotator)
