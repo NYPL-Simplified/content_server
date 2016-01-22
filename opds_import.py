@@ -12,8 +12,8 @@ from nose.tools import set_trace
 class ContentOPDSImporter(OPDSImporter):
     """OPDS Importer that mirrors content to S3."""
 
-    def import_from_feed(self, feed):
-        imported, messages, next_links = super(ContentOPDSImporter, self).import_from_feed(feed)
+    def import_from_feed(self, feed, even_if_no_author=False):
+        imported, messages, next_links = super(ContentOPDSImporter, self).import_from_feed(feed, even_if_no_author=even_if_no_author)
 
         # Mirror books and images to S3 for the imported editions
         uploader = S3Uploader()
@@ -52,6 +52,9 @@ class ContentOPDSImporter(OPDSImporter):
 
 class UnglueItOPDSImporter(ContentOPDSImporter):
     """Importer for unglue.it OPDS feed, which has acquisition links from multiple sources for some entries."""
+
+    def import_from_feed(self, feed):
+        return super(UnglueItOPDSImporter, self).import_from_feed(feed, even_if_no_author=True)
 
     def extract_metadata(self, feed):
         metadata = []
