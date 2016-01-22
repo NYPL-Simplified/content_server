@@ -42,7 +42,7 @@ class ContentOPDSImporter(OPDSImporter):
                         uploader.mirror_one(representation)
                         representation.content = None
                         edition.work.set_presentation_ready()
-                    except IOError as e:
+                    except (IOError, TypeError) as e:
                         print "Unable to mirror %s" % original_url
                         representation.mirror_exception = str(e)
                         representation.mirror_url = None
