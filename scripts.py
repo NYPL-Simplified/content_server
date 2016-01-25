@@ -2,7 +2,6 @@ import os
 from core.scripts import Script
 from monitor import GutenbergMonitor
 from coverage import (
-    GutenbergIllustratedCoverageProvider,
     GutenbergEPUBCoverageProvider,
 )
 from core.model import (
@@ -115,10 +114,9 @@ class GutenbergMonitorScript(Script):
 class MakePresentationReadyScript(Script):
 
     def run(self):
-        illustrated = GutenbergIllustratedCoverageProvider(self._db)
         epub = GutenbergEPUBCoverageProvider(self._db)
 
-        providers = [illustrated, epub]
+        providers = [epub]
         PresentationReadyMonitor(
             self._db, providers, calculate_work_even_if_no_author=True).run()
 
