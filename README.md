@@ -1,25 +1,15 @@
 # Library Simplified Content Server
+[![Build Status](https://travis-ci.org/NYPL-Simplified/content_server.svg?branch=master)](https://travis-ci.org/NYPL-Simplified/content_server)
 
 This is the Open Access Content Server for [Library Simplified](http://www.librarysimplified.org/). The oa content server collects and parses sources and preserves metadata for open access works, serving them up in a feed with verbose OPDS entries.
 
-It depends on the [LS Server Core](https://github.com/NYPL/Simplified-server-core) as a git submodule.
+It depends on the [LS Server Core](https://github.com/NYPL-Simplified/server_core) as a git submodule.
 
 ## Installation
 
-Thorough deployment instructions, including essential libraries for Linux systems, can be found [in the Library Simplified wiki](https://github.com/NYPL-Simplified/Simplified-iOS/wiki/Deployment-Instructions). **_If this is your first time installing a Library Simplified server, please review those instructions._**
+Thorough deployment instructions, including essential libraries for Linux systems, can be found [in the Library Simplified wiki](https://github.com/NYPL-Simplified/Simplified/wiki/Deployment-Instructions). **_If this is your first time installing a Library Simplified server, please review those instructions._**
 
-Keep in mind that the content server requires the Xvfb library, unique database names and a data directory, as detailed below.
-
-### Xvfb library
-
-Download the Xvfb library:
-```sh
-$ sudo yum install xorg-x11-server-Xvfb
-```
-Or, on Ubuntu:
-```sh
-$ sudo apt-get install xvfb
-```
+Keep in mind that the content server requires unique database names and a data directory, as detailed below.
 
 ### Database
 
