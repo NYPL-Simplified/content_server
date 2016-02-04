@@ -41,7 +41,6 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
             self.gutenberg_mirror = None
             self.epub_mirror = None
 
-        input_source = DataSource.lookup(_db, DataSource.GUTENBERG)
         self.output_source = DataSource.lookup(
             _db, DataSource.GUTENBERG_EPUB_GENERATOR)        
         if callable(mirror_uploader):
@@ -49,8 +48,10 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         self.uploader = mirror_uploader
 
         super(GutenbergEPUBCoverageProvider, self).__init__(
-            self.output_source.name, input_source, self.output_source,
-            workset_size=workset_size)
+            self.output_source.name, Identifier.GUTENBERG_ID, 
+            self.output_source,
+            workset_size=workset_size
+        )
 
     def process_item(self, identifier):
         edition = self.edition(identifier)
