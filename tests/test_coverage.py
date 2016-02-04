@@ -3,9 +3,10 @@ from nose.tools import (
     eq_,
 )
 import datetime
+import tempfile
 import urllib
 from ..core.testing import DatabaseTest
-
+from ..config import temp_config
 from ..coverage import GutenbergEPUBCoverageProvider
 from ..core.s3 import DummyS3Uploader
 from ..core.coverage import CoverageFailure
@@ -34,9 +35,7 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         super(TestGutenbergEPUBCoverageProvider, self).setup()
         self.provider = DummyEPUBCoverageProvider(
             self._db, mirror_uploader=DummyS3Uploader)
-        self.real_provider = GutenbergEPUBCoverageProvider(
-            self._db, mirror_uploader=DummyS3Uploader
-        )
+
 
     def test_process_item_success(self):
         edition, pool = self._edition(with_license_pool=True)
@@ -77,13 +76,23 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
 
     def test_epub_path_for_wrong_identifier_type(self):
         identifier = self._identifier(Identifier.OVERDRIVE_ID)
-        failure = self.real_provider.epub_path_for(identifier)
+        real_provider = GutenbergEPUBCoverageProvider(
+            self._db, mirror_uploader=DummyS3Uploader
+        )
+        failure = real_provider.epub_path_for(identifier)
         assert isinstance(failure, CoverageFailure)
         eq_('Not a Gutenberg book.', failure.exception)
 
-    def test_epub_path_for_nonexistent_directory(self):
+    def test_epub_path_for_empty_directory(self):
         identifier = self._identifier(Identifier.GUTENBERG_ID)
-        failure = self.real_provider.epub_path_for(identifier)
+
+        failure = None
+        with temp_config() as config:
+            config['data_directory'] = tempfile.gettempdir()
+            real_provider = GutenbergEPUBCoverageProvider(
+                self._db, mirror_uploader=DummyS3Uploader
+            )
+            failure = real_provider.epub_path_for(identifier)
         assert isinstance(failure, CoverageFailure)
         assert failure.exception.startswith('Expected EPUB directory')
         assert failure.exception.endswith('does not exist!')
