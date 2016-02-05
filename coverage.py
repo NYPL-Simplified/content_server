@@ -71,7 +71,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         if not edition.license_pool:
             return CoverageFailure(
                 self, identifier,
-                'No license pool for %r', edition,
+                'No license pool for %r' % edition,
                 transient=True,
             )
 
