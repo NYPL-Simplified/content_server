@@ -86,7 +86,7 @@ class OPDSFeedController(ContentServerController):
             self._db, "Open-Access Content", url, lane,
             annotator=self.annotator(),
             facets=load_facets_from_request(Configuration),
-            pagination=load_pagination_from_request(Configuration)
+            pagination=load_pagination_from_request()
         )
         return feed_response(opds_feed.content) 
 
