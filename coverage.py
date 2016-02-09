@@ -5,7 +5,10 @@ import tempfile
 import urllib
 from nose.tools import set_trace
 from config import Configuration
-from core.coverage import CoverageProvider
+from core.coverage import (
+    CoverageProvider,
+    CoverageFailure,
+)
 from core.model import (
     get_one,
     DataSource,
@@ -38,7 +41,6 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
             self.gutenberg_mirror = None
             self.epub_mirror = None
 
-        input_source = DataSource.lookup(_db, DataSource.GUTENBERG)
         self.output_source = DataSource.lookup(
             _db, DataSource.GUTENBERG_EPUB_GENERATOR)        
         if callable(mirror_uploader):
@@ -46,24 +48,38 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         self.uploader = mirror_uploader
 
         super(GutenbergEPUBCoverageProvider, self).__init__(
-            self.output_source.name, input_source, self.output_source,
-            workset_size=workset_size)
+            self.output_source.name, Identifier.GUTENBERG_ID, 
+            self.output_source,
+            workset_size=workset_size
+        )
 
-    def process_edition(self, edition):
+    def process_item(self, identifier):
+        edition = self.edition(identifier)
+        if isinstance(edition, CoverageFailure):
+            return edition
         if edition.medium in (Edition.AUDIO_MEDIUM, Edition.VIDEO_MEDIUM):
             # There is no epub to mirror.
-            return True
-        identifier_obj = edition.primary_identifier
-        epub_path = self.epub_path_for(identifier_obj)
-        if not epub_path:
-            return False
-        license_pool = get_one(
-            self._db, LicensePool, identifier_id=identifier_obj.id)
+            return CoverageFailure(
+                self, identifier, 
+                'Medium "%s" does not support EPUB' % edition.medium,
+                transient=False,
+            )
+        epub_path = self.epub_path_for(identifier)
+        if isinstance(epub_path, CoverageFailure):
+            return epub_path
+        license_pool = edition.license_pool
+        if not edition.license_pool:
+            return CoverageFailure(
+                self, identifier,
+                'No license pool for %r' % edition,
+                transient=True,
+            )
 
-        url = self.uploader.book_url(identifier_obj, 'epub')
+        url = self.uploader.book_url(identifier, 'epub')
         link, new = license_pool.add_link(
             Hyperlink.OPEN_ACCESS_DOWNLOAD, url, self.output_source,
-            Representation.EPUB_MEDIA_TYPE, None, epub_path)
+            Representation.EPUB_MEDIA_TYPE, None, epub_path
+        )
         representation = link.resource.representation
         representation.mirror_url = url
         self.uploader.mirror_one(representation)
@@ -72,24 +88,32 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
             Representation.EPUB_MEDIA_TYPE, DeliveryMechanism.NO_DRM, 
             link.resource
         )
-        return True
+        return identifier
 
     def epub_path_for(self, identifier):
         """Find the path to the best EPUB for the given identifier."""
         if identifier.type != Identifier.GUTENBERG_ID:
-            return None
+            return CoverageFailure(
+                self, identifier, "Not a Gutenberg book.", transient=False
+            )
         epub_directory = os.path.join(
-            self.epub_mirror, identifier.identifier)
+            self.epub_mirror, identifier.identifier
+        )
         if not os.path.exists(epub_directory):
-            self.log.warn(
-                "Expected EPUB directory %s does not exist!", epub_directory)
-            return None
+            return CoverageFailure(
+                self, identifier,
+                "Expected EPUB directory %s does not exist!" % epub_directory,
+                transient=True,
+            )
+
         files = os.listdir(epub_directory)
         epub_filename = self.best_epub_in(files)
         if not epub_filename:
-            self.log.warn(
-                "Could not find a good EPUB in %s!", epub_directory)
-            return None
+            return CoverageFailure(
+                self, identifier,
+                "Could not find a good EPUB in %s!", epub_directory,
+                transient=True
+            )
         return os.path.join(epub_directory, epub_filename)
 
     @classmethod

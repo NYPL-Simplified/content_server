@@ -66,6 +66,15 @@ class TestFeedController(ControllerTest):
             assert self.english_2.title in response.data
             assert self.french_1.author in response.data
 
+            feed = feedparser.parse(response.data)
+            links = feed['feed']['links']
+
+            # Verify the default facets.
+            next_link = [x for x in links if x['rel'] == 'next'][0]['href']
+            assert 'order=added' in next_link
+            assert 'collection=full' in next_link
+            assert 'available=always' in next_link
+
     def test_multipage_feed(self):
         SessionManager.refresh_materialized_views(self._db)
 
