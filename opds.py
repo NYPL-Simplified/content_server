@@ -29,7 +29,6 @@ class ContentServerAnnotator(VerboseAnnotator):
             return
 
         rel = OPDSFeed.OPEN_ACCESS_REL
-        best_link = None
         for resource in active_license_pool.open_access_links:
             if not resource.representation:
                 continue
