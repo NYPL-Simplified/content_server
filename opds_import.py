@@ -5,12 +5,18 @@ from core.model import (
     Hyperlink,
     DataSource,
 )
+import requests
 from urllib import urlopen
 from copy import deepcopy
 from nose.tools import set_trace
 
 class ContentOPDSImporter(OPDSImporter):
     """OPDS Importer that mirrors content to S3."""
+
+    def attempt_to_fetch(self, url, expect_media_type, referer=None):
+        """Try to fetch a resource. If its media type is not
+        in the given list, it's treated the same as a 404.
+        """
 
     def import_from_feed(self, feed, even_if_no_author=False):
         imported, messages, next_links = super(ContentOPDSImporter, self).import_from_feed(feed, even_if_no_author=even_if_no_author)
