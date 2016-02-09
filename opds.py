@@ -24,15 +24,20 @@ class ContentServerAnnotator(VerboseAnnotator):
 
     @classmethod
     def annotate_work_entry(cls, work, active_license_pool, edition, identifier, feed, entry):
+        """Annotate the feed with all open-access links for this book."""
         if not active_license_pool.open_access:
             return
 
         rel = OPDSFeed.OPEN_ACCESS_REL
-        best_pool, best_link = active_license_pool.best_license_link
-        feed.add_link_to_entry(
-            entry, rel=rel, href=best_link.representation.mirror_url,
-            type=best_link.representation.media_type,
-        )
+        best_link = None
+        for resource in active_license_pool.open_access_links:
+            if not resource.representation:
+                continue
+            url = resource.representation.mirror_url
+            type = resource.representation.media_type
+            feed.add_link_to_entry(
+                entry, rel=rel, href=url, type=type
+            )
 
     @classmethod
     def default_lane_url(cls):
