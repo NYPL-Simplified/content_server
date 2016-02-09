@@ -5,6 +5,7 @@ import flask
 from core.util.flask_util import languages_for_request
 
 from core.problem_details import *
+from core.util.problem_detail import ProblemDetail
 
 from config import (
     Configuration,
@@ -82,11 +83,18 @@ class OPDSFeedController(ContentServerController):
         
         url = url_for("feed", _external=True)
 
+        facets = load_facets_from_request(Configuration)
+        if isinstance(facets, ProblemDetail):
+            return facets
+        pagination = load_pagination_from_request()
+        if isinstance(pagination, ProblemDetail):
+            return pagination
+
         opds_feed = AcquisitionFeed.page(
             self._db, "Open-Access Content", url, lane,
             annotator=self.annotator(),
-            facets=load_facets_from_request(),
-            pagination=load_pagination_from_request()
+            facets=facets,
+            pagination=pagination,
         )
         return feed_response(opds_feed.content) 
 
