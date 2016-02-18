@@ -4,6 +4,7 @@ from core.model import (
     Representation,
     Hyperlink,
     DataSource,
+    UnresolvedIdentifier,
 )
 import requests
 from urllib import urlopen
@@ -11,47 +12,26 @@ from copy import deepcopy
 from nose.tools import set_trace
 
 class ContentOPDSImporter(OPDSImporter):
-    """OPDS Importer that mirrors content to S3."""
+    """OPDSImporter that sets up an UnresolvedIdentifier for every new
+    edition.
+    """
 
-    def attempt_to_fetch(self, url, expect_media_type, referer=None):
-        """Try to fetch a resource. If its media type is not
-        in the given list, it's treated the same as a 404.
-        """
+    def import_from_feed(self, feed, even_if_no_author=False, cutoff_date=None):
+        imported, messages, next_links = super(
+            ContentOPDSImporter, self
+        ).import_from_feed(
+            feed, 
+            even_if_no_author=even_if_no_author, 
+            cutoff_date=cutoff_date
+        )
 
-    def import_from_feed(self, feed, even_if_no_author=False):
-        imported, messages, next_links = super(ContentOPDSImporter, self).import_from_feed(feed, even_if_no_author=even_if_no_author)
-
-        # Mirror books and images to S3 for the imported editions
-        uploader = S3Uploader()
+        # Add an UnresolvedIdentifier for every imported edition.
         for edition in imported:
-            links = edition.primary_identifier.links
-            for link in links:
-                representation = link.resource.representation
-                media_type = representation.media_type
-                original_url = link.resource.url
-
-                mirror_url = None
-                if media_type in Representation.BOOK_MEDIA_TYPES:
-                    extension = Representation.FILE_EXTENSIONS.get(media_type)
-                    mirror_url = uploader.book_url(edition.primary_identifier, extension=extension, title=edition.title)
-                elif link.rel == Hyperlink.THUMBNAIL_IMAGE or link.rel == Hyperlink.IMAGE:
-                    data_source = DataSource.lookup(self._db, self.data_source_name)
-                    mirror_url = uploader.cover_image_url(data_source, edition.primary_identifier, original_url.split("/")[-1])
-               
-                if mirror_url:
-                    try:
-                        representation.mirror_url = mirror_url
-                        handle = urlopen(original_url)
-                        content = handle.read()
-                        handle.close()
-                        representation.content = content
-                        uploader.mirror_one(representation)
-                        representation.content = None
-                        edition.work.set_presentation_ready()
-                    except (IOError, TypeError) as e:
-                        print "Unable to mirror %s" % original_url
-                        representation.mirror_exception = str(e)
-                        representation.mirror_url = None
+            UnresolvedIdentifier.register(
+                self._db, 
+                edition.primary_identifier, 
+                force=True
+            )
 
         return imported, messages, next_links
 
@@ -59,13 +39,17 @@ class ContentOPDSImporter(OPDSImporter):
 class UnglueItOPDSImporter(ContentOPDSImporter):
     """Importer for unglue.it OPDS feed, which has acquisition links from multiple sources for some entries."""
 
-    def import_from_feed(self, feed):
-        return super(UnglueItOPDSImporter, self).import_from_feed(feed, even_if_no_author=True)
+    def import_from_feed(self, feed, even_if_no_author=True, cutoff_date=None):
+        return super(UnglueItOPDSImporter, self).import_from_feed(
+            feed, even_if_no_author=True, cutoff_date=cutoff_date
+        )
 
     def extract_metadata(self, feed):
         metadata = []
 
-        entry_metadata_objs, status_messages, next_links = super(UnglueItOPDSImporter, self).extract_metadata(feed)
+        entry_metadata_objs, status_messages, next_links = super(
+            UnglueItOPDSImporter, self
+        ).extract_metadata(feed)
 
         for metadata_obj in entry_metadata_objs:
             book_links = []

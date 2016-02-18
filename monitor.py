@@ -1,6 +1,10 @@
 import os
 from gutenberg import GutenbergAPI
-from core.monitor import Monitor
+from coverage import UnglueItMirror
+from core.monitor import (
+    Monitor,
+    IdentifierResolutionMonitor as CoreIdentifierResolutionMonitor,
+)
 from core.model import (
     get_one_or_create,
     DataSource,
@@ -37,3 +41,18 @@ class GutenbergMonitor(Monitor):
 
             self._db.commit()
 
+
+class IdentifierResolutionMonitor(CoreIdentifierResolutionMonitor):
+
+    def __init__(self, _db, **kwargs):
+        required = [UnglueItMirror(_db)]
+        super(IdentifierResolutionMonitor, self).__init__(
+            _db, "Content server identifier resolution monitor",
+            required_coverage_providers = required,
+            **kwargs
+        )
+
+    def finalize(self, unresolved_identifier):
+        # Make sure the work is marked presentation ready.
+        work = unresolved_identifier.identifier.licensed_through.work
+        work.set_presentation_ready()
