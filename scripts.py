@@ -184,15 +184,28 @@ class DirectoryImportScript(Script):
                     license_pool.edition = edition
 
                 work, new = license_pool.calculate_work(known_edition=edition)
-                work.presentation_ready = True
 
                 if new:
                     print "created new edition %s" % edition.title
                 for link in edition.primary_identifier.links:
-                    if "description" not in link.rel:
+                    if link.rel == Hyperlink.IMAGE:
                         representation = link.resource.representation
                         representation.mirror_url = link.resource.url
                         representation.local_content_path = paths[link.resource.url]
                         uploader.mirror_one(representation)   
+                        height = 300
+                        width = 200
+                        cover_file = isbn + ".png"
+                        thumbnail_url = uploader.cover_image_url(
+                            data_source_name, primary_identifier, cover_file,
+                            height
+                        )
+                        thumbnail, ignore = representation.scale(
+                            height, width, thumbnail_url, 
+                            Representation.PNG_MEDIA_TYPE
+                        )
+                        uploader.mirror_one(thumbnail)
 
+                work.set_presentation_ready()
+                work.calculate_presentation()
                 self._db.commit()
