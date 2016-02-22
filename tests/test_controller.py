@@ -16,6 +16,7 @@ from ..controller import (
 )
 
 from ..core.model import (
+    DataSource,
     SessionManager
 )
 
@@ -51,14 +52,12 @@ class ControllerTest(DatabaseTest):
         self.content_server = TestContentServer(self._db, testing=True)
         self.app.content_server = self.content_server
         self.controller = ContentServerController(self.content_server)
-
+        SessionManager.refresh_materialized_views(self._db)
         
         
 class TestFeedController(ControllerTest):
 
     def test_feed(self):
-        SessionManager.refresh_materialized_views(self._db)
-
         with self.app.test_request_context("/"):
             response = self.content_server.opds_feeds.feed()
 
@@ -75,9 +74,26 @@ class TestFeedController(ControllerTest):
             assert 'collection=full' in next_link
             assert 'available=always' in next_link
 
-    def test_multipage_feed(self):
-        SessionManager.refresh_materialized_views(self._db)
+    def test_lane_feed(self):
+        with self.app.test_request_context("/"):
+            # This request finds all the test books, since they're
+            # all in Gutenberg.
+            response = self.content_server.opds_feeds.feed(
+                license_source_name=DataSource.GUTENBERG
+            )
+            feed = feedparser.parse(response.data)
+            entries = feed['entries']
+            eq_(3, len(entries))
 
+            # This request finds zero books.
+            response = self.content_server.opds_feeds.feed(
+                license_source_name=DataSource.OVERDRIVE
+            )
+            feed = feedparser.parse(response.data)
+            entries = feed['entries']
+            eq_(0, len(entries))
+
+    def test_multipage_feed(self):
         with self.app.test_request_context("/?size=1&order=title"):
             
             response = self.content_server.opds_feeds.feed()
@@ -118,8 +134,6 @@ class TestFeedController(ControllerTest):
             assert "Sylvia_Louise_Engdahl" in response.data
 
     def test_preload(self):
-        SessionManager.refresh_materialized_views(self._db)
-
         with temp_config() as config:
             urn = self.english_2.primary_edition.primary_identifier.urn
             config[Configuration.PRELOADED_CONTENT] = [urn]

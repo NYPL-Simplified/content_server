@@ -25,6 +25,7 @@ from core.app_server import (
 
 from core.model import (
     production_session,
+    DataSource,
 )
 from core.lane import (
     Lane,
@@ -78,8 +79,18 @@ class ContentServerController(object):
 
 class OPDSFeedController(ContentServerController):
     
-    def feed(self):
-        lane = Lane(self._db, "All books")
+    def feed(self, license_source_name=None):
+        if license_source_name:
+            license_source = DataSource.lookup(self._db, license_source_name)
+            if not license_source:
+                return UNRECOGNIZED_DATA_SOURCE.detailed(
+                    "Unrecognized license source: %s" % license_source_name
+                )
+            lane_name = "All books from %s" % license_source.name
+        else:
+            lane_name = "All books"
+            license_source=None
+        lane = Lane(self._db, lane_name, license_source=license_source)
         
         url = url_for("feed", _external=True)
 

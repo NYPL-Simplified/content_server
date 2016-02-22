@@ -45,6 +45,11 @@ def returns_problem_detail(f):
 def feed():
     return app.content_server.opds_feeds.feed()
 
+@app.route('/works/sources/<license_source_name>')
+@returns_problem_detail
+def feed_from_license_source(license_source_name):
+    return app.content_server.opds_feeds.feed(license_source_name)
+
 @app.route('/preload')
 @returns_problem_detail
 def preload():
