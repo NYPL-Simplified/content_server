@@ -4,7 +4,10 @@ from nose.tools import (
     set_trace,
 )
 
+from flask import url_for
+
 from . import DatabaseTest
+from ..opds import ContentServerAnnotator
 from ..config import(
     Configuration,
     temp_config,
@@ -15,9 +18,20 @@ from ..controller import (
     ContentServerController,
 )
 
+from ..core.app_server import (
+    load_facets_from_request,
+    load_pagination_from_request,
+)
+
 from ..core.model import (
     DataSource,
     SessionManager
+)
+
+from ..core.lane import(
+    Facets,
+    Pagination,
+    Lane,
 )
 
 import feedparser
@@ -78,12 +92,34 @@ class TestFeedController(ControllerTest):
         with self.app.test_request_context("/"):
             # This request finds all the test books, since they're
             # all in Gutenberg.
+            license_source = DataSource.lookup(self._db, DataSource.GUTENBERG)
             response = self.content_server.opds_feeds.feed(
-                license_source_name=DataSource.GUTENBERG
+                license_source_name=license_source.name
             )
             feed = feedparser.parse(response.data)
             entries = feed['entries']
             eq_(3, len(entries))
+
+            [next_url] = [x['href'] for x in feed['feed']['links']
+                          if x['rel'] == 'next']
+
+            # Verify that the next link comes from feed_url() and points
+            # to the next page.
+            annotator = ContentServerAnnotator()
+            facets = load_facets_from_request(Configuration)
+            pagination = load_pagination_from_request().next_page
+            lane = Lane(self._db, "test", license_source=license_source)
+            expect = annotator.feed_url(lane, facets, pagination)
+            eq_(expect, next_url)
+
+            # Verify that the next link goes to the feed_from_license_source
+            # controller.
+            expect = url_for(
+                "feed_from_license_source", 
+                license_source_name=license_source.name,
+                _external=True
+            )
+            assert next_url.startswith(expect)
 
             # This request finds zero books.
             response = self.content_server.opds_feeds.feed(

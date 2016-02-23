@@ -45,8 +45,14 @@ class ContentServerAnnotator(VerboseAnnotator):
     def feed_url(self, lane, facets, pagination):
         kwargs = dict(facets.items())
         kwargs.update(dict(pagination.items()))
-        return cdn_url_for(
-            "feed", lane_name=lane.name, languages=lane.languages, _external=True, **kwargs)
+        if lane.license_source:
+            view = "feed_from_license_source"
+            kwargs['license_source_name'] = lane.license_source.name
+        else:
+            view = "feed"
+            kwargs['lane'] = lane.name
+            kwargs['languages'] = lane.languages
+        return cdn_url_for(view, _external=True, **kwargs)
 
 class AllCoverLinksAnnotator(ContentServerAnnotator):
 
