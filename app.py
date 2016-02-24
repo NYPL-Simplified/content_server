@@ -16,6 +16,7 @@ from core.opds import AcquisitionFeed
 from core.util.flask_util import languages_for_request
 from core.app_server import (
     URNLookupController,
+    HeartbeatController,
 )
 
 app = Flask(__name__)
@@ -58,6 +59,12 @@ def preload():
 @app.route('/lookup')
 def lookup():
     return URNLookupController(app.content_server._db).work_lookup(ContentServerAnnotator)
+
+# Controllers used for operations purposes
+@app.route('/heartbeat')
+@returns_problem_detail
+def hearbeat():
+    return HeartbeatController().heartbeat()
 
 if __name__ == '__main__':
     debug = True
