@@ -1,22 +1,11 @@
-from core.opds_import import OPDSImporter
-from core.s3 import S3Uploader
+from core.opds_import import OPDSImporterWithS3Mirror
 from core.model import (
     Representation,
-    Hyperlink,
-    DataSource,
 )
 from copy import deepcopy
 from nose.tools import set_trace
 
-class ContentOPDSImporter(OPDSImporter):
-    """OPDS Importer that mirrors content to S3."""
-
-    def __init__(self, *args, **kwargs):
-        super(ContentOPDSImporter, self).__init__(
-            *args, mirror=S3Uploader(), **kwargs
-        )
-
-class UnglueItOPDSImporter(ContentOPDSImporter):
+class UnglueItOPDSImporter(OPDSImporterWithS3Mirror):
     """Importer for unglue.it OPDS feed, which has acquisition links from multiple sources for some entries."""
 
     def import_from_feed(self, feed):

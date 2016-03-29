@@ -18,6 +18,7 @@ from core.monitor import PresentationReadyMonitor
 from core.metadata_layer import (
     LinkData,
     FormatData,
+    ReplacementPolicy,
 )
 from core.s3 import S3Uploader
 from marc import MARCExtractor
@@ -137,6 +138,7 @@ class DirectoryImportScript(Script):
             raise Exception("No metadata file found")
 
         # Extract metadata for each book
+        replacement_policy = ReplacementPolicy(rights=True, links=True)
         with open(metadata_file) as f:
             metadata_records = MARCExtractor().parse(f, data_source_name)
             for metadata in metadata_records:
@@ -179,7 +181,7 @@ class DirectoryImportScript(Script):
 
                 license_pool, new_license_pool = metadata.license_pool(self._db)
                 edition, new = metadata.edition(self._db)
-                metadata.apply(edition, replace_rights=True, replace_links=True)
+                metadata.apply(edition, replace=replacement_policy)
                 if new_license_pool:
                     license_pool.edition = edition
 

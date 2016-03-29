@@ -7,5 +7,5 @@ package_dir = os.path.join(bin_dir, "..", "..")
 sys.path.append(os.path.abspath(package_dir))
 if len(sys.argv) < 3:
     raise Exception("Two arguments required: directory and data source name")
-from content.scripts import DirectoryImportScript
+from scripts import DirectoryImportScript
 DirectoryImportScript().run(sys.argv[1], sys.argv[2])
