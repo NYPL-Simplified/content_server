@@ -15,6 +15,7 @@ elasticsearch
 python-dateutil
 uwsgi
 loggly-python-handler
+cairosvg
 
 # Used only by content
 pymarc
