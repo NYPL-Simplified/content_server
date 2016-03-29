@@ -8,8 +8,15 @@ from nose.tools import set_trace
 class UnglueItOPDSImporter(OPDSImporterWithS3Mirror):
     """Importer for unglue.it OPDS feed, which has acquisition links from multiple sources for some entries."""
 
-    def import_from_feed(self, feed):
-        return super(UnglueItOPDSImporter, self).import_from_feed(feed, even_if_no_author=True)
+    def import_from_feed(
+            self, feed, even_if_no_author=False, 
+            cutoff_date=None, immediately_presentation_ready=False
+    ):
+        # Override some of the provided arguments.
+        super(UnglueItOPDSImporter, self).import_from_feed(
+            feed, even_if_no_author=True, cutoff_date=cutoff_date,
+            immediately_presentation_ready=True
+        )
 
     def extract_metadata(self, feed):
         metadata = []
