@@ -16,6 +16,7 @@ python-dateutil
 uwsgi
 loggly-python-handler
 cairosvg
+py-bcrypt
 
 # Used only by content
 pymarc
