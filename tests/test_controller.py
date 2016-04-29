@@ -168,15 +168,3 @@ class TestFeedController(ControllerTest):
             response = self.content_server.opds_feeds.feed()
             assert "family_name" in response.data
             assert "Sylvia_Louise_Engdahl" in response.data
-
-    def test_preload(self):
-        with temp_config() as config:
-            urn = self.english_2.primary_edition.primary_identifier.urn
-            config[Configuration.PRELOADED_CONTENT] = [urn]
-
-            with self.app.test_request_context("/"):
-                response = self.content_server.opds_feeds.preload()
-
-                assert self.english_1.title not in response.data
-                assert self.english_2.title in response.data
-                assert self.french_1.author not in response.data

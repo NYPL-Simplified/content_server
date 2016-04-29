@@ -17,6 +17,7 @@ uwsgi
 loggly-python-handler
 cairosvg
 py-bcrypt
+mock
 
 # Used only by content
 pymarc
