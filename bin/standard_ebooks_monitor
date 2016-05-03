@@ -11,5 +11,6 @@ from core.model import DataSource
 OPDSImportScript(
     "https://standardebooks.org/opds/all", 
     DataSource.STANDARD_EBOOKS, 
-    OPDSImporterWithS3Mirror
+    OPDSImporterWithS3Mirror,
+    immediately_presentation_ready=True,
 ).run()
