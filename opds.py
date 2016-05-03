@@ -18,10 +18,7 @@ from core.model import (
     Edition,
     LicensePool,
 )
-from core.lane import (
-    Facets,
-    Pagination,
-)
+
 from config import Configuration
 
 class ContentServerAnnotator(VerboseAnnotator):
@@ -49,24 +46,16 @@ class ContentServerAnnotator(VerboseAnnotator):
     def top_level_title(self):
         return "All Books"
 
-    def lane_url(self, lane, facets=None, pagination=None):
-        if not facets:
-            facets = Facets.default()
-        if not pagination:
-            pagination = Pagination.default()
-        return self.feed_url(lane, facets, pagination)
-
     def feed_url(self, lane, facets, pagination):
         kwargs = dict(facets.items())
         kwargs.update(dict(pagination.items()))
-        if lane and lane.license_source:
+        if lane.license_source:
             view = "feed_from_license_source"
             kwargs['license_source_name'] = lane.license_source.name
         else:
             view = "feed"
-            if lane:
-                kwargs['lane'] = lane.name
-                kwargs['languages'] = lane.languages
+            kwargs['lane'] = lane.name
+            kwargs['languages'] = lane.languages
         return cdn_url_for(view, _external=True, **kwargs)
 
 class AllCoverLinksAnnotator(ContentServerAnnotator):
