@@ -18,6 +18,7 @@ from core.model import (
     Edition,
     LicensePool,
 )
+
 from config import Configuration
 
 class ContentServerAnnotator(VerboseAnnotator):
@@ -41,6 +42,9 @@ class ContentServerAnnotator(VerboseAnnotator):
     @classmethod
     def default_lane_url(cls):
         return cdn_url_for("feed", _external=True)
+
+    def top_level_title(self):
+        return "All Books"
 
     def feed_url(self, lane, facets, pagination):
         kwargs = dict(facets.items())

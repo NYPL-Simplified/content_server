@@ -13,7 +13,7 @@ class UnglueItOPDSImporter(OPDSImporterWithS3Mirror):
             cutoff_date=None, immediately_presentation_ready=True
     ):
         # Override some of the provided arguments.
-        super(UnglueItOPDSImporter, self).import_from_feed(
+        return super(UnglueItOPDSImporter, self).import_from_feed(
             feed, even_if_no_author=True, cutoff_date=cutoff_date,
             immediately_presentation_ready=True
         )
@@ -34,7 +34,8 @@ class UnglueItOPDSImporter(OPDSImporterWithS3Mirror):
                     other_links.append(deepcopy(link))
 
             if len(book_links) > 1:
-                # Create a different metadata object for each book link
+                # Create a different metadata object for each book link. This is necessary because
+                # the book links may come from different sources and have different rights.
                 for link in book_links:
                     metadata_copy = deepcopy(metadata_obj)
                     metadata_copy.links = [link] + other_links
