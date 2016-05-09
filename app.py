@@ -41,6 +41,18 @@ def returns_problem_detail(f):
         return v
     return decorated
 
+@app.teardown_request
+def shutdown_session(exception):
+    if (hasattr(app, 'content_server',)
+        and hasattr(app.content_server, '_db')
+        and app.content_server._db
+    ):
+        if exception:
+            app.content_server._db.rollback()
+        else:
+            app.content_server._db.commit()
+            
+
 @app.route('/')
 @returns_problem_detail
 def feed():
