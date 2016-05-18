@@ -156,7 +156,7 @@ class TestFeedController(ControllerTest):
             family_name = u"Engdahl",
             wikipedia_name = u"Sylvia_Louise_Engdahl"
         )
-        self.english_1.primary_edition.add_contributor(engdahl, "Author")
+        self.english_1.presentation_edition.add_contributor(engdahl, "Author")
         self.english_1.calculate_opds_entries(verbose=False)
         SessionManager.refresh_materialized_views(self._db)
 
