@@ -356,10 +356,7 @@ class GutenbergRDFExtractor(object):
 
         # Ensure that an open-access LicensePool exists for this book.
         license_pool, new_license_pool = metadata.license_pool(_db)
-        if new_license_pool:
-            license_pool.edition = edition
-        license_pool.calculate_work(known_edition=edition)
-
+        license_pool.calculate_work()
         return edition, license_pool, new
 
 
