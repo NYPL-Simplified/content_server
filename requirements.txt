@@ -18,6 +18,7 @@ loggly-python-handler
 cairosvg
 py-bcrypt
 mock
+Flask-Babel
 
 # Used only by content
 pymarc
