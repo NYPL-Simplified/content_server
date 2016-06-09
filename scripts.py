@@ -18,6 +18,7 @@ from core.monitor import PresentationReadyMonitor
 from core.metadata_layer import (
     LinkData,
     FormatData,
+    CirculationData,
     ReplacementPolicy,
 )
 from core.s3 import S3Uploader
@@ -138,7 +139,7 @@ class DirectoryImportScript(Script):
             raise Exception("No metadata file found")
 
         # Extract metadata for each book
-        replacement_policy = ReplacementPolicy(rights=True, links=True)
+        replacement_policy = ReplacementPolicy(rights=True, links=True, formats=True)
         with open(metadata_file) as f:
             metadata_records = MARCExtractor().parse(f, data_source_name)
             for metadata in metadata_records:
@@ -163,7 +164,13 @@ class DirectoryImportScript(Script):
                     drm_scheme=DeliveryMechanism.NO_DRM,
                     link=epub_link,
                 )]
-                metadata.links.append(epub_link)
+                circulation_data = CirculationData(
+                    data_source_name,
+                    primary_identifier,
+                    links=[epub_link],
+                    formats=formats,
+                )
+                metadata.circulation = circulation_data
 
                 cover_file = isbn + ".jpg"
                 cover_url = uploader.cover_image_url(
@@ -177,15 +184,9 @@ class DirectoryImportScript(Script):
                     media_type=Representation.JPEG_MEDIA_TYPE,
                 ))
 
-                metadata.formats = formats
-
-                license_pool, new_license_pool = metadata.license_pool(self._db)
                 edition, new = metadata.edition(self._db)
                 metadata.apply(edition, replace=replacement_policy)
-                if new_license_pool:
-                    license_pool.edition = edition
-
-                work, new = license_pool.calculate_work(known_edition=edition)
+                pool = get_one(self._db, LicensePool, identifier=edition.primary_identifier)
 
                 if new:
                     print "created new edition %s" % edition.title
@@ -208,6 +209,6 @@ class DirectoryImportScript(Script):
                         )
                         uploader.mirror_one(thumbnail)
 
+                work, ignore = pool.calculate_work()
                 work.set_presentation_ready()
-                work.calculate_presentation()
                 self._db.commit()

@@ -19,6 +19,7 @@ from core.model import (
     LicensePool,
     Representation,
     Resource,
+    RightsStatus,
 )
 from core.s3 import S3Uploader
 
@@ -87,7 +88,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
 
         license_pool.set_delivery_mechanism(
             Representation.EPUB_MEDIA_TYPE, DeliveryMechanism.NO_DRM, 
-            link.resource
+            RightsStatus.GENERIC_OPEN_ACCESS, link.resource
         )
         return identifier
 
