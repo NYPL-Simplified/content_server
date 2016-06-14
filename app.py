@@ -10,6 +10,7 @@ from controller import ContentServer
 
 import flask
 from flask import Flask, url_for, redirect, Response
+from flask.ext.babel import Babel
 
 from opds import ContentServerAnnotator
 from core.opds import AcquisitionFeed
@@ -23,6 +24,7 @@ app = Flask(__name__)
 debug = Configuration.logging_policy().get("level") == 'DEBUG'
 app.config['DEBUG'] = debug
 app.debug = debug
+babel = Babel(app)
 
 if os.environ.get('AUTOINITIALIZE') == 'False':
     pass
