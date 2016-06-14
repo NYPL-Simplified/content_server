@@ -19,6 +19,7 @@ from core.model import (
     LicensePool,
     Representation,
     Resource,
+    RightsStatus,
 )
 from core.s3 import S3Uploader
 
@@ -29,7 +30,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     uploading it.
     """
 
-    def __init__(self, _db, workset_size=5, mirror_uploader=S3Uploader):
+    def __init__(self, _db, batch_size=5, mirror_uploader=S3Uploader):
         data_directory = Configuration.data_directory()
 
         if data_directory:
@@ -51,7 +52,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         super(GutenbergEPUBCoverageProvider, self).__init__(
             output_source.name, Identifier.GUTENBERG_ID, 
             output_source,
-            workset_size=workset_size
+            batch_size=batch_size
         )
 
     def process_item(self, identifier):
@@ -61,8 +62,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         if edition.medium in (Edition.AUDIO_MEDIUM, Edition.VIDEO_MEDIUM):
             # There is no epub to mirror.
             return CoverageFailure(
-                self, identifier, 
+                identifier, 
                 'Medium "%s" does not support EPUB' % edition.medium,
+                data_source=self.output_source,
                 transient=False,
             )
         epub_path = self.epub_path_for(identifier)
@@ -71,8 +73,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         license_pool = edition.license_pool
         if not edition.license_pool:
             return CoverageFailure(
-                self, identifier,
+                identifier,
                 'No license pool for %r' % edition,
+                data_source=self.output_source,
                 transient=True,
             )
 
@@ -87,7 +90,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
 
         license_pool.set_delivery_mechanism(
             Representation.EPUB_MEDIA_TYPE, DeliveryMechanism.NO_DRM, 
-            link.resource
+            RightsStatus.GENERIC_OPEN_ACCESS, link.resource
         )
         return identifier
 
@@ -95,15 +98,16 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         """Find the path to the best EPUB for the given identifier."""
         if identifier.type != Identifier.GUTENBERG_ID:
             return CoverageFailure(
-                self, identifier, "Not a Gutenberg book.", transient=False
+                identifier, "Not a Gutenberg book.", data_source=self.output_source, transient=False
             )
         epub_directory = os.path.join(
             self.epub_mirror, identifier.identifier
         )
         if not os.path.exists(epub_directory):
             return CoverageFailure(
-                self, identifier,
+                identifier,
                 "Expected EPUB directory %s does not exist!" % epub_directory,
+                data_source=self.output_source,
                 transient=True,
             )
 
@@ -111,8 +115,9 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         epub_filename = self.best_epub_in(files)
         if not epub_filename:
             return CoverageFailure(
-                self, identifier,
+                identifier,
                 "Could not find a good EPUB in %s!", epub_directory,
+                data_source=self.output_source,
                 transient=True
             )
         return os.path.join(epub_directory, epub_filename)

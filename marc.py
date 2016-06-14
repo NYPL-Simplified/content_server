@@ -58,7 +58,6 @@ class MARCExtractor(object):
 
             metadata_records.append(Metadata(
                 data_source=data_source_name,
-                license_data_source=data_source_name,
                 title=title,
                 language='eng',
                 medium=Edition.BOOK_MEDIUM,
