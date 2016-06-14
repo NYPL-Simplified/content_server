@@ -45,6 +45,8 @@ from core.metadata_layer import (
     FormatData,
     MeasurementData,
     SubjectData,
+    CirculationData,
+    ReplacementPolicy,
 )
 
 from core.monitor import Monitor
@@ -333,11 +335,11 @@ class GutenbergRDFExtractor(object):
                     formats.append(FormatData(
                         content_type=Representation.EPUB_MEDIA_TYPE,
                         drm_scheme=DeliveryMechanism.NO_DRM,
+                        rights_uri=rights_uri,
                     ))
 
         metadata = Metadata(
             data_source=DataSource.GUTENBERG,
-            license_data_source=DataSource.GUTENBERG,
             title=title,
             subtitle=subtitle,
             language=language,
@@ -347,15 +349,23 @@ class GutenbergRDFExtractor(object):
             primary_identifier=primary_identifier,
             subjects=subjects,
             contributors=contributors,
-            formats=formats,
             links=links,
-            rights_uri=rights_uri,
         )
         edition, new = metadata.edition(_db)
         metadata.apply(edition)
 
         # Ensure that an open-access LicensePool exists for this book.
-        license_pool, new_license_pool = metadata.license_pool(_db)
+        circulation_data = CirculationData(
+            data_source=DataSource.GUTENBERG,
+            primary_identifier=primary_identifier,
+            formats=formats,
+            default_rights_uri=rights_uri,
+            links=links,
+        )
+
+        license_pool, new_license_pool = circulation_data.license_pool(_db)
+        replace = ReplacementPolicy(formats=True)
+        circulation_data.apply(license_pool, replace=replace)
         license_pool.calculate_work()
         return edition, license_pool, new
 

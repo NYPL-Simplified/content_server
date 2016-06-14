@@ -25,7 +25,7 @@ class DummyEPUBCoverageProvider(GutenbergEPUBCoverageProvider):
 
     def epub_path_for(self, identifier):
         if identifier.identifier.startswith('fail'):
-            return CoverageFailure(self, identifier, "failure!", True)
+            return CoverageFailure(identifier, "failure!", self.output_source, True)
         return "/oh/you/want/%s.epub" % identifier.identifier
 
 

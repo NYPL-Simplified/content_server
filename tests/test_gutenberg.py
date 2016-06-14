@@ -84,7 +84,7 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
              u'Mormon Church -- Sacred books'], 
             sorted(x.identifier for x in lcsh))
 
-        eq_(RightsStatus.PUBLIC_DOMAIN_USA, pool.rights_status.uri)
+        eq_(RightsStatus.PUBLIC_DOMAIN_USA, pool.delivery_mechanisms[0].rights_status.uri)
         eq_(True, pool.open_access)
 
     def test_unicode_characters_in_title(self):
@@ -124,6 +124,6 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
         """
         fh = StringIO.StringIO(self.sample_data("pg16.rdf"))
         book, pool, new = GutenbergRDFExtractor.book_in(self._db, "16", fh)
-        eq_(RightsStatus.IN_COPYRIGHT, pool.rights_status.uri)
+        eq_(RightsStatus.IN_COPYRIGHT, pool.delivery_mechanisms[0].rights_status.uri)
         eq_(False, pool.open_access)
 
