@@ -20,6 +20,9 @@ from ..core.model import (
     Representation,
     Resource,
 )
+from ..core.scripts import (
+    RunCoverageProviderScript
+)
 
 class DummyEPUBCoverageProvider(GutenbergEPUBCoverageProvider):
 
@@ -36,6 +39,12 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         self.provider = DummyEPUBCoverageProvider(
             self._db, mirror_uploader=DummyS3Uploader)
 
+    def test_can_instantiate_from_script(self):
+        script = RunCoverageProviderScript(
+            DummyEPUBCoverageProvider, self._db, [], 
+            mirror_uploader=DummyS3Uploader
+        )
+        assert isinstance(script.provider, DummyEPUBCoverageProvider)
 
     def test_process_item_success(self):
         edition, pool = self._edition(with_license_pool=True)
