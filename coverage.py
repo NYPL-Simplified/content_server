@@ -30,7 +30,12 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
     uploading it.
     """
 
-    def __init__(self, _db, batch_size=5, mirror_uploader=S3Uploader):
+    def __init__(self, _db, batch_size=5, mirror_uploader=S3Uploader,
+                 input_identifier_types=None, **kwargs):
+        """
+        :param input_identifier_types: Ignored, since we always
+        and exclusively manage Gutenberg IDs.
+        """
         data_directory = Configuration.data_directory()
 
         if data_directory:
@@ -52,7 +57,8 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         super(GutenbergEPUBCoverageProvider, self).__init__(
             output_source.name, Identifier.GUTENBERG_ID, 
             output_source,
-            batch_size=batch_size
+            batch_size=batch_size,
+            **kwargs
         )
 
     def process_item(self, identifier):
@@ -116,7 +122,7 @@ class GutenbergEPUBCoverageProvider(CoverageProvider):
         if not epub_filename:
             return CoverageFailure(
                 identifier,
-                "Could not find a good EPUB in %s!", epub_directory,
+                "Could not find a good EPUB in %s!" % epub_directory,
                 data_source=self.output_source,
                 transient=True
             )
