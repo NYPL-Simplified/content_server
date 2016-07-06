@@ -12,4 +12,5 @@ OPDSImportScript(
     "https://unglue.it/api/opds/epub/",
     DataSource.UNGLUE_IT,
     OPDSImporterWithS3Mirror,
+    immediately_presentation_ready=True,
 ).run()
