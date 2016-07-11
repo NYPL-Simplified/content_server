@@ -105,6 +105,7 @@ class OPDSFeedController(ContentServerController):
             annotator=self.annotator(),
             facets=facets,
             pagination=pagination,
+            force_refresh=True,
         )
         return feed_response(opds_feed.content) 
         
