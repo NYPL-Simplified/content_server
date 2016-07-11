@@ -2,12 +2,14 @@ from collections import defaultdict
 from nose.tools import set_trace
 from flask import url_for
 from sqlalchemy.orm import lazyload
+import logging
 
 from core.app_server import cdn_url_for
 from core.opds import (
     VerboseAnnotator,
     AcquisitionFeed,
     OPDSFeed,
+    UnfulfillableWork,
 )
 from core.model import (
     Identifier,
@@ -30,14 +32,28 @@ class ContentServerAnnotator(VerboseAnnotator):
             return
 
         rel = OPDSFeed.OPEN_ACCESS_REL
+        fulfillable = False
         for resource in active_license_pool.open_access_links:
             if not resource.representation:
                 continue
             url = resource.representation.mirror_url
+            if not url:
+                logging.warn(
+                    "Problem with %r: open-access link %s not mirrored!", 
+                    identifier,
+                    resource.representation.url
+                )
+                continue
             type = resource.representation.media_type
             feed.add_link_to_entry(
                 entry, rel=rel, href=url, type=type
             )
+
+            fulfillable = True
+        if not fulfillable:
+            # This open-access work has no usable open-access links.
+            # Don't show it in the OPDS feed.
+            raise UnfulfillableWork()
 
     @classmethod
     def default_lane_url(cls):
