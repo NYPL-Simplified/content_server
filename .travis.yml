@@ -17,6 +17,8 @@ git:
 before_install:
   - git config submodule.core.url https://github.com/NYPL-Simplified/server_core.git
   - git submodule update --init --recursive
+  - pip install "setuptools>=18.5"
+  - sleep 10
 
 install:
   - pip install -r requirements.txt
