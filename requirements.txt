@@ -20,5 +20,8 @@ py-bcrypt
 mock
 Flask-Babel
 
+# Ensure that we support SNI-based SSL
+ndg-httpsclient
+
 # Used only by content
 pymarc
