@@ -62,11 +62,11 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
 
         a1, a2 = sorted(
             [x.contributor for x in book.contributions],
-            key = lambda x: x.name)
+            key = lambda x: x.sort_name)
 
-        eq_("Church of Jesus Christ of Latter-day Saints", a1.name)
+        eq_("Church of Jesus Christ of Latter-day Saints", a1.sort_name)
 
-        eq_("Smith, Joseph, Jr.", a2.name)
+        eq_("Smith, Joseph, Jr.", a2.sort_name)
         eq_(["Smith, Joseph"], a2.aliases)
 
         classifications = book.primary_identifier.classifications
