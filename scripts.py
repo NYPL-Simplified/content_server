@@ -1,16 +1,24 @@
+import argparse
+import csv
 import os
+from sqlalchemy.orm import lazyload
+
 from core.scripts import Script
 from monitor import GutenbergMonitor
 from coverage import (
     GutenbergEPUBCoverageProvider,
 )
 from core.model import (
+    DataSource,
+    DeliveryMechanism,
+    get_one,
+    Hyperlink,
+    Identifier,
     LicensePool,
     Representation,
-    DeliveryMechanism,
-    Hyperlink,
+    Resource,
     RightsStatus,
-    get_one,
+    Work,
 )
 from core.classifier import Classifier
 from core.monitor import PresentationReadyMonitor
@@ -212,3 +220,85 @@ class DirectoryImportScript(Script):
                 work, ignore = pool.calculate_work()
                 work.set_presentation_ready()
                 self._db.commit()
+
+
+class CSVExportScript(Script):
+
+    """Exports the primary identifier, title, author, and download URL
+    for all of the works from a particular DataSource or DataSources
+    to a CSV file format.
+    """
+
+    @classmethod
+    def arg_parser(cls):
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            '-f', '--filename', help='Name for the output CSV file.'
+        )
+        parser.add_argument(
+            'data_source',
+            help='A specific source whose Works should be exported.'
+        )
+        parser.add_argument(
+            '-a', '--append', action='store_true',
+            help='Append new results to existing file.'
+        )
+        return parser
+
+    def do_run(self):
+        parser = self.arg_parser().parse_args()
+
+        # Verify the requested DataSource exists.
+        source_name = parser.data_source
+        source = DataSource.lookup(self._db, source_name)
+        if not source:
+            raise ValueError('DataSource "%s" could not be found.', source_name)
+
+        # Get all Works from the Source.
+        works = self._db.query(Work, Identifier, Resource.url)
+        works = works.options(lazyload(Work.license_pools))
+        works = works.join(Work.license_pools).join(LicensePool.data_source).\
+                join(LicensePool.links).join(LicensePool.identifier).\
+                join(Hyperlink.resource).filter(
+                    DataSource.name==source_name,
+                    Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
+                    Resource.url.like(u'%.epub')
+                ).all()
+
+        self.log.info(
+            'Exporting data for %d Works from %s', len(works), source_name
+        )
+
+        # Transform the works into very basic CSV data for review.
+        rows = list()
+        for work, identifier, url in works:
+            row_data = dict(
+                identifier=identifier.urn.encode('utf-8'),
+                title=work.title.encode('utf-8'),
+                author=work.author.encode('utf-8'),
+                download_url=url.encode('utf-8')
+            )
+            rows.append(row_data)
+
+        # List the works in alphabetical order by title.
+        compare = lambda a,b: cmp(a['title'].lower(), b['title'].lower())
+        rows.sort(cmp=compare)
+
+        # Find or create a CSV file in the main app directory.
+        filename = parser.filename
+        if not filename.lower().endswith('.csv'):
+            filename += '.csv'
+        filename = os.path.abspath(filename)
+
+        # Determine whether to append new rows or write over an existing file.
+        open_method = 'w'
+        if parser.append:
+            open_method = 'a'
+
+        with open(filename, open_method) as f:
+            fieldnames=['identifier', 'title', 'author', 'download_url']
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not parser.append:
+                writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
