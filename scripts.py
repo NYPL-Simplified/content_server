@@ -288,7 +288,7 @@ class CSVExportScript(Script):
         filename = parser.filename
         if not filename.lower().endswith('.csv'):
             filename += '.csv'
-        filename = os.path.join(os.path.split(__file__)[0], filename)
+        filename = os.path.abspath(filename)
 
         # Determine whether to append new rows or write over an existing file.
         open_method = 'w'
