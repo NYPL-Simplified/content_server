@@ -19,6 +19,7 @@ cairosvg
 py-bcrypt
 mock
 Flask-Babel
+money
 
 # Ensure that we support SNI-based SSL
 ndg-httpsclient
