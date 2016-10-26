@@ -30,6 +30,8 @@ class BasqueMetadataExtractor(object):
             publisher = unicode(row.get('Sello Editorial'), 'utf-8')
             title = unicode(row.get('Title'), 'utf-8')
 
+            # The spreadsheet's identifier column is labeled ISBN, but
+            # contains custom eLiburutegia IDs, like "ELIB201600288".
             identifier = row.get('ISBN')
             primary_identifier = IdentifierData(
                 Identifier.ELIB_ID, identifier)
