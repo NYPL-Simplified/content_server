@@ -400,6 +400,5 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
             )
 
         for work in works:
-            edition = work.presentation_edition
-            custom_list.add_entry(edition)
+            custom_list.add_entry(work.presentation_edition)
         self._db.commit()
