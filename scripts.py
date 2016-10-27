@@ -1,9 +1,14 @@
 import argparse
 import csv
 import os
+import re
+from datetime import datetime
 from sqlalchemy.orm import lazyload
 
-from core.scripts import Script
+from core.scripts import (
+    IdentifierInputScript,
+    Script,
+)
 from monitor import GutenbergMonitor
 from coverage import (
     GutenbergEPUBCoverageProvider,
@@ -29,9 +34,13 @@ from core.metadata_layer import (
     CirculationData,
     ReplacementPolicy,
 )
+from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
+
 from marc import MARCExtractor
+from opds import ContentServerAnnotator
 from nose.tools import set_trace
+
 
 class GutenbergMonitorScript(Script):
 
@@ -302,3 +311,53 @@ class CSVExportScript(Script):
                 writer.writeheader()
             for row in rows:
                 writer.writerow(row)
+
+
+class CustomOPDSFeedGenerationScript(IdentifierInputScript):
+
+    @classmethod
+    def arg_parser(cls):
+        parser = IdentifierInputScript.arg_parser()
+        parser.add_argument('-t', '--title', help='The title of the feed.')
+        parser.add_argument(
+            '-d', '--domain', help='The domain where the feed will be placed.'
+        )
+        return parser
+
+    @classmethod
+    def slugify_feed_title(cls, feed_title):
+        slug = re.sub('[.!@#$,]', '', feed_title.lower())
+        slug = re.sub('&', ' and ', slug)
+        slug = re.sub(' {2,}', ' ', slug)
+        return '-'.join(slug.split(' '))
+
+    def do_run(self):
+        parser = self.arg_parser().parse_args()
+        feed_title = parser.title
+        data_source = DataSource.lookup(self._db, parser.data_source)
+        identifier_type = parser.identifier_type
+        identifiers = parser.identifier_strings
+
+        if not (feed_title and parser.domain and identifier_type):
+            # We can't build an OPDS feed or identify the required
+            # Works without this information.
+            raise ValueError('Please include all required arguments.')
+
+        # TODO: Works are being selected against LicensePool,
+        # ignoring the possibility that a the LicensePool may have been
+        # suppressed or superceded.
+        works = self._db.query(Work).select_from(LicensePool).\
+            join(LicensePool.work).join(LicensePool.identifier).filter(
+                Identifier.type==identifier_type,
+                Identifier.identifier.in_(identifiers)
+            ).options(lazyload(Work.license_pools)).all()
+        feed = AcquisitionFeed(
+            self._db, feed_title, parser.domain, works,
+            annotator=ContentServerAnnotator()
+        )
+
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S-')
+        filename = self.slugify_feed_title(feed_title)
+        filename = os.path.abspath(timestamp + filename + '.opds')
+        with open(filename, 'w') as f:
+            f.write(unicode(feed))
