@@ -18,6 +18,7 @@ from core.model import (
     CustomListEntry,
     DataSource,
     DeliveryMechanism,
+    Edition,
     get_one,
     get_one_or_create,
     Hyperlink,
@@ -360,7 +361,8 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
             join(LicensePool.work).join(LicensePool.identifier).filter(
                 Identifier.type==identifier_type,
                 Identifier.identifier.in_(identifiers)
-            ).options(lazyload(Work.license_pools)).all()
+            ).join(Work.presentation_edition).order_by(Edition.title).\
+            options(lazyload(Work.license_pools)).all()
         feed = AcquisitionFeed(
             self._db, feed_title, parser.domain, works,
             annotator=ContentServerAnnotator()
