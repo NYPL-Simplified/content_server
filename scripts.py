@@ -242,11 +242,11 @@ class CSVExportScript(Script):
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            '-f', '--filename', help='Name for the output CSV file.'
+            'data-source',
+            help='A specific source whose Works should be exported.'
         )
         parser.add_argument(
-            'data_source',
-            help='A specific source whose Works should be exported.'
+            '-f', '--filename', help='Name for the output CSV file.'
         )
         parser.add_argument(
             '-a', '--append', action='store_true',
