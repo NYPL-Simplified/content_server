@@ -367,8 +367,6 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
         )
 
         filename = self.slugify_feed_title(feed_title)
-        filename = os.path.abspath(filename + '.opds')
-
         if parsed.upload:
             feed_representation = Representation()
             feed_representation.set_fetched_content(
@@ -382,5 +380,6 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
             self._db.commit()
             uploader.mirror_one(feed_representation)
         else:
+            filename = os.path.abspath(filename + '.opds')
             with open(filename, 'w') as f:
                 f.write(unicode(feed))
