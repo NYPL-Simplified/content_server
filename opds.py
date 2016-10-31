@@ -74,6 +74,7 @@ class ContentServerAnnotator(VerboseAnnotator):
             kwargs['languages'] = lane.languages
         return cdn_url_for(view, _external=True, **kwargs)
 
+
 class AllCoverLinksAnnotator(ContentServerAnnotator):
 
     @classmethod
@@ -95,5 +96,3 @@ class AllCoverLinksAnnotator(ContentServerAnnotator):
             if cover.scaled_path:
                 thumbnails.append(cover.scaled_path)
         return thumbnails, full
-
-                     

@@ -327,6 +327,10 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
             '-d', '--domain', help='The domain where the feed will be placed.'
         )
         parser.add_argument(
+            '-u', '--upload', action='store_true',
+            help='Upload OPDS feed via S3.'
+        )
+        parser.add_argument(
             '--create-list', action='store_true',
             help='Create a CustomList to save feed entries.'
         )
@@ -338,12 +342,12 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
 
     @classmethod
     def slugify_feed_title(cls, feed_title):
-        slug = re.sub('[.!@#$,]', '', feed_title.lower())
+        slug = re.sub('[.!@#\'$,]', '', feed_title.lower())
         slug = re.sub('&', ' and ', slug)
         slug = re.sub(' {2,}', ' ', slug)
         return unicode('-'.join(slug.split(' ')))
 
-    def do_run(self):
+    def run(self, uploader=None):
         parser = self.arg_parser().parse_args()
         feed_title = unicode(parser.title)
         identifier_type = parser.identifier_type
@@ -373,8 +377,22 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S-')
         filename = self.slugify_feed_title(feed_title)
         filename = os.path.abspath(timestamp + filename + '.opds')
-        with open(filename, 'w') as f:
-            f.write(unicode(feed))
+
+        if parser.upload:
+            feed_representation = Representation()
+            feed_representation.set_fetched_content(
+                unicode(feed), content_path=filename
+            )
+
+            uploader = uploader or S3Uploader()
+            feed_representation.mirror_url = uploader.feed_url(filename)
+
+            self._db.add(feed_representation)
+            self._db.commit()
+            uploader.mirror_one(feed_representation)
+        else:
+            with open(filename, 'w') as f:
+                f.write(unicode(feed))
 
     def create_custom_list(self, parser, feed_title, works):
         list = None
