@@ -319,7 +319,7 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
 
     @classmethod
     def arg_parser(cls):
-        parser = IdentifierInputScript.arg_parser()
+        parser = argparse.ArgumentParser()
         parser.add_argument('-t', '--title', help='The title of the feed.')
         parser.add_argument(
             '-d', '--domain', help='The domain where the feed will be placed.'
@@ -327,6 +327,10 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
         parser.add_argument(
             '-u', '--upload', action='store_true',
             help='Upload OPDS feed via S3.'
+        )
+        parser.add_argument(
+            'urns', help='A specific identifier urn to process.',
+            metavar='URN', nargs='*'
         )
         return parser
 
@@ -337,34 +341,35 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
         slug = re.sub(' {2,}', ' ', slug)
         return unicode('-'.join(slug.split(' ')))
 
-    def run(self, uploader=None):
-        parser = self.arg_parser().parse_args()
-        feed_title = unicode(parser.title)
-        identifier_type = parser.identifier_type
-        identifiers = parser.identifier_strings
+    def run(self, uploader=None, cmd_args=None):
+        parsed = self.arg_parser().parse_args(cmd_args)
+        feed_title = unicode(parsed.title)
+        feed_id = unicode(parsed.domain)
 
-        if not (feed_title and parser.domain and identifier_type):
+        if not (feed_title and feed_id and parsed.urns):
             # We can't build an OPDS feed or identify the required
             # Works without this information.
             raise ValueError('Please include all required arguments.')
+
+        identifier_ids = [Identifier.parse_urn(self._db, unicode(urn))[0].id
+                          for urn in parsed.urns]
 
         # TODO: Works are being selected against LicensePool,
         # ignoring the possibility that a the LicensePool may have been
         # suppressed or superceded.
         works = self._db.query(Work).select_from(LicensePool).\
-            join(LicensePool.work).join(LicensePool.identifier).filter(
-                Identifier.type==identifier_type,
-                Identifier.identifier.in_(identifiers)
-            ).options(lazyload(Work.license_pools)).all()
+                join(LicensePool.work).join(LicensePool.identifier).\
+                filter(Identifier.id.in_(identifier_ids)).\
+                options(lazyload(Work.license_pools)).all()
         feed = AcquisitionFeed(
-            self._db, feed_title, parser.domain, works,
+            self._db, feed_title, feed_id, works,
             annotator=ContentServerAnnotator()
         )
 
         filename = self.slugify_feed_title(feed_title)
         filename = os.path.abspath(filename + '.opds')
 
-        if parser.upload:
+        if parsed.upload:
             feed_representation = Representation()
             feed_representation.set_fetched_content(
                 unicode(feed), content_path=filename
