@@ -14,8 +14,6 @@ from coverage import (
     GutenbergEPUBCoverageProvider,
 )
 from core.model import (
-    CustomList,
-    CustomListEntry,
     DataSource,
     DeliveryMechanism,
     Edition,
@@ -330,14 +328,6 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
             '-u', '--upload', action='store_true',
             help='Upload OPDS feed via S3.'
         )
-        parser.add_argument(
-            '--create-list', action='store_true',
-            help='Create a CustomList to save feed entries.'
-        )
-        parser.add_argument(
-            '--append-list', action='store_true',
-            help='Save new entries to an existing CustomList.'
-        )
         return parser
 
     @classmethod
@@ -365,14 +355,11 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
             join(LicensePool.work).join(LicensePool.identifier).filter(
                 Identifier.type==identifier_type,
                 Identifier.identifier.in_(identifiers)
-            ).join(Work.presentation_edition).order_by(Edition.title).\
-            options(lazyload(Work.license_pools)).all()
+            ).options(lazyload(Work.license_pools)).all()
         feed = AcquisitionFeed(
             self._db, feed_title, parser.domain, works,
             annotator=ContentServerAnnotator()
         )
-
-        self.create_custom_list(parser, feed_title, works)
 
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S-')
         filename = self.slugify_feed_title(feed_title)
@@ -393,30 +380,3 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
         else:
             with open(filename, 'w') as f:
                 f.write(unicode(feed))
-
-    def create_custom_list(self, parser, feed_title, works):
-        list = None
-
-        if not (parser.create_list or parser.append_list):
-            return
-
-        list_source = DataSource.lookup(self._db, DataSource.LIBRARY_STAFF)
-        foreign_identifier = self.slugify_feed_title(feed_title)
-        custom_list, is_new_list = get_one_or_create(
-            self._db, CustomList, data_source=list_source,
-            foreign_identifier=foreign_identifier
-        )
-
-        if is_new_list:
-            custom_list.name = feed_title
-
-        if parser.create_list and not is_new_list:
-            raise ValueError(
-                'A custom list with the title %s already exists. Please '\
-                'select a different title for this list or use the \'-a\''\
-                ' option to append new entries.' % feed_title
-            )
-
-        for work in works:
-            custom_list.add_entry(work.presentation_edition)
-        self._db.commit()
