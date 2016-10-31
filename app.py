@@ -53,7 +53,6 @@ def shutdown_session(exception):
             app.content_server._db.rollback()
         else:
             app.content_server._db.commit()
-            
 
 @app.route('/')
 @returns_problem_detail

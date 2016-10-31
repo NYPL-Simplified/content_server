@@ -1,6 +1,8 @@
 import argparse
 import csv
 import os
+import re
+from datetime import datetime
 from sqlalchemy.orm import lazyload
 
 from core.scripts import Script
@@ -11,7 +13,9 @@ from coverage import (
 from core.model import (
     DataSource,
     DeliveryMechanism,
+    Edition,
     get_one,
+    get_one_or_create,
     Hyperlink,
     Identifier,
     LicensePool,
@@ -29,9 +33,13 @@ from core.metadata_layer import (
     CirculationData,
     ReplacementPolicy,
 )
+from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
+
 from marc import MARCExtractor
+from opds import ContentServerAnnotator
 from nose.tools import set_trace
+
 
 class GutenbergMonitorScript(Script):
 
@@ -219,11 +227,11 @@ class CSVExportScript(Script):
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            '-f', '--filename', help='Name for the output CSV file.'
+            'data-source',
+            help='A specific source whose Works should be exported.'
         )
         parser.add_argument(
-            'data_source',
-            help='A specific source whose Works should be exported.'
+            '-f', '--filename', help='Name for the output CSV file.'
         )
         parser.add_argument(
             '-a', '--append', action='store_true',
@@ -288,3 +296,83 @@ class CSVExportScript(Script):
                 writer.writeheader()
             for row in rows:
                 writer.writerow(row)
+
+
+class CustomOPDSFeedGenerationScript(Script):
+
+    @classmethod
+    def arg_parser(cls):
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-t', '--title', help='The title of the feed.')
+        parser.add_argument(
+            '-d', '--domain', help='The domain where the feed will be placed.'
+        )
+        parser.add_argument(
+            '-u', '--upload', action='store_true',
+            help='Upload OPDS feed via S3.'
+        )
+        parser.add_argument(
+            'urns', help='A specific identifier urn to process.',
+            metavar='URN', nargs='*'
+        )
+        return parser
+
+    @classmethod
+    def slugify_feed_title(cls, feed_title):
+        slug = re.sub('[.!@#\'$,]', '', feed_title.lower())
+        slug = re.sub('&', ' and ', slug)
+        slug = re.sub(' {2,}', ' ', slug)
+        return unicode('-'.join(slug.split(' ')))
+
+    def run(self, uploader=None, cmd_args=None):
+        parsed = self.arg_parser().parse_args(cmd_args)
+        feed_title = unicode(parsed.title)
+        feed_id = unicode(parsed.domain)
+
+        if not (feed_title and feed_id and parsed.urns):
+            # We can't build an OPDS feed or identify the required
+            # Works without this information.
+            raise ValueError('Please include all required arguments.')
+
+        works = list()
+        for urn in parsed.urns:
+            identifier = Identifier.parse_urn(self._db, unicode(urn))[0]
+            license_pool = identifier.licensed_through
+            if not license_pool:
+                self.log.warn("No LicensePool found for %r", identifier)
+                continue
+            if license_pool.suppressed:
+                self.log.warn(
+                    "LicensePool %r has been suppressed and won't be added to "\
+                    "the feed.", license_pool
+                )
+                continue
+            work = license_pool.work
+            if not work:
+                self.log.warn("No Work found for %r", license_pool)
+                continue
+            works.append(work)
+
+        feed = AcquisitionFeed(
+            self._db, feed_title, feed_id, works,
+            annotator=ContentServerAnnotator()
+        )
+
+        filename = self.slugify_feed_title(feed_title)
+        if parsed.upload:
+            feed_representation = Representation()
+            feed_representation.set_fetched_content(
+                unicode(feed), content_path=filename
+            )
+
+            uploader = uploader or S3Uploader()
+            feed_representation.mirror_url = uploader.feed_url(filename)
+
+            self._db.add(feed_representation)
+            self._db.commit()
+            uploader.mirror_one(feed_representation)
+        else:
+            filename = os.path.abspath(filename + '.opds')
+            with open(filename, 'w') as f:
+                f.write(unicode(feed))
+            self.log.info("OPDS feed saved locally at %s", filename)
