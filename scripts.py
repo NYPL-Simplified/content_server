@@ -5,10 +5,7 @@ import re
 from datetime import datetime
 from sqlalchemy.orm import lazyload
 
-from core.scripts import (
-    IdentifierInputScript,
-    Script,
-)
+from core.scripts import Script
 from monitor import GutenbergMonitor
 from coverage import (
     GutenbergEPUBCoverageProvider,
@@ -301,7 +298,7 @@ class CSVExportScript(Script):
                 writer.writerow(row)
 
 
-class CustomOPDSFeedGenerationScript(IdentifierInputScript):
+class CustomOPDSFeedGenerationScript(Script):
 
     @classmethod
     def arg_parser(cls):
