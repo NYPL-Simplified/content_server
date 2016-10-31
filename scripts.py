@@ -334,16 +334,25 @@ class CustomOPDSFeedGenerationScript(Script):
             # Works without this information.
             raise ValueError('Please include all required arguments.')
 
-        identifier_ids = [Identifier.parse_urn(self._db, unicode(urn))[0].id
-                          for urn in parsed.urns]
+        works = list()
+        for urn in parsed.urns:
+            identifier = Identifier.parse_urn(self._db, unicode(urn))[0]
+            license_pool = identifier.licensed_through
+            if not license_pool:
+                self.log.warn("No LicensePool found for %r", identifier)
+                continue
+            if license_pool.suppressed:
+                self.log.warn(
+                    "LicensePool %r has been suppressed and won't be added to "\
+                    "the feed.", license_pool
+                )
+                continue
+            work = license_pool.work
+            if not work:
+                self.log.warn("No Work found for %r", license_pool)
+                continue
+            works.append(work)
 
-        # TODO: Works are being selected against LicensePool,
-        # ignoring the possibility that a the LicensePool may have been
-        # suppressed or superceded.
-        works = self._db.query(Work).select_from(LicensePool).\
-                join(LicensePool.work).join(LicensePool.identifier).\
-                filter(Identifier.id.in_(identifier_ids)).\
-                options(lazyload(Work.license_pools)).all()
         feed = AcquisitionFeed(
             self._db, feed_title, feed_id, works,
             annotator=ContentServerAnnotator()
@@ -366,3 +375,4 @@ class CustomOPDSFeedGenerationScript(Script):
             filename = os.path.abspath(filename + '.opds')
             with open(filename, 'w') as f:
                 f.write(unicode(feed))
+            self.log.info("OPDS feed saved locally at %s", filename)
