@@ -143,95 +143,81 @@ class MakePresentationReadyScript(Script):
 
 class DirectoryImportScript(Script):
 
-    def run(self, directory, data_source_name):
-        # Look for a MARC metadata file in the directory
-        metadata_file = None
-        for root, dirs, files in os.walk(directory):
-            for file in files:
-                if file.endswith(".mrc") or file.endswith(".marc"):
-                    metadata_file = os.path.join(root, file)
-                    break
-            if metadata_file:
-                break
-
-        if not metadata_file:
-            raise Exception("No metadata file found")
-
-        # Extract metadata for each book
+    def run(self, data_source_name, metadata_records, epub_directory, cover_directory):
         replacement_policy = ReplacementPolicy(rights=True, links=True, formats=True)
-        with open(metadata_file) as f:
-            metadata_records = MARCExtractor().parse(f, data_source_name)
-            for metadata in metadata_records:
-                primary_identifier = metadata.primary_identifier
-                isbn = primary_identifier.identifier
+        for metadata in metadata_records:
+            primary_identifier = metadata.primary_identifier
 
-                uploader = S3Uploader()
-                paths = dict()
+            uploader = S3Uploader()
+            paths = dict()
 
-                url = uploader.book_url(primary_identifier, "epub")
-                epub_path = os.path.join(directory, isbn + ".epub")
-                paths[url] = epub_path
+            url = uploader.book_url(primary_identifier, "epub")
+            epub_path = os.path.join(epub_directory, primary_identifier.identifier + ".epub")
+            paths[url] = epub_path
 
-                epub_link = LinkData(
-                    rel=Hyperlink.OPEN_ACCESS_DOWNLOAD,
-                    href=url,
-                    media_type=Representation.EPUB_MEDIA_TYPE,
-                )
+            epub_link = LinkData(
+                rel=Hyperlink.OPEN_ACCESS_DOWNLOAD,
+                href=url,
+                media_type=Representation.EPUB_MEDIA_TYPE,
+            )
 
-                formats = [FormatData(
-                    content_type=Representation.EPUB_MEDIA_TYPE,
-                    drm_scheme=DeliveryMechanism.NO_DRM,
-                    link=epub_link,
-                )]
-                circulation_data = CirculationData(
-                    data_source_name,
-                    primary_identifier,
-                    links=[epub_link],
-                    formats=formats,
-                )
-                metadata.circulation = circulation_data
+            formats = [FormatData(
+                content_type=Representation.EPUB_MEDIA_TYPE,
+                drm_scheme=DeliveryMechanism.NO_DRM,
+                link=epub_link,
+            )]
+            circulation_data = CirculationData(
+                data_source_name,
+                primary_identifier,
+                links=[epub_link],
+                formats=formats,
+            )
+            metadata.circulation = circulation_data
 
-                cover_file = isbn + ".jpg"
-                cover_url = uploader.cover_image_url(
-                    data_source_name, primary_identifier, cover_file)
-                cover_path = os.path.join(directory, cover_file)
-                paths[cover_url] = cover_path
+            cover_file = primary_identifier.identifier + ".jpg"
+            cover_url = uploader.cover_image_url(
+                data_source_name, primary_identifier, cover_file)
+            cover_path = os.path.join(cover_directory, cover_file)
+            paths[cover_url] = cover_path
 
-                metadata.links.append(LinkData(
-                    rel=Hyperlink.IMAGE,
-                    href=cover_url,
-                    media_type=Representation.JPEG_MEDIA_TYPE,
-                ))
+            metadata.links.append(LinkData(
+                rel=Hyperlink.IMAGE,
+                href=cover_url,
+                media_type=Representation.JPEG_MEDIA_TYPE,
+            ))
 
-                edition, new = metadata.edition(self._db)
-                metadata.apply(edition, replace=replacement_policy)
-                pool = get_one(self._db, LicensePool, identifier=edition.primary_identifier)
+            edition, new = metadata.edition(self._db)
+            metadata.apply(edition, replace=replacement_policy)
+            pool = get_one(self._db, LicensePool, identifier=edition.primary_identifier)
 
-                if new:
-                    print "created new edition %s" % edition.title
-                for link in edition.primary_identifier.links:
-                    if link.rel == Hyperlink.IMAGE:
-                        representation = link.resource.representation
-                        representation.mirror_url = link.resource.url
-                        representation.local_content_path = paths[link.resource.url]
-                        uploader.mirror_one(representation)   
-                        height = 300
-                        width = 200
-                        cover_file = isbn + ".png"
-                        thumbnail_url = uploader.cover_image_url(
-                            data_source_name, primary_identifier, cover_file,
-                            height
-                        )
-                        thumbnail, ignore = representation.scale(
-                            height, width, thumbnail_url, 
-                            Representation.PNG_MEDIA_TYPE
-                        )
-                        uploader.mirror_one(thumbnail)
+            if new:
+                print "created new edition %s" % edition.title
+            for link in edition.primary_identifier.links:
+                if link.rel == Hyperlink.IMAGE or link.rel == Hyperlink.OPEN_ACCESS_DOWNLOAD:
+                    representation = link.resource.representation
+                    representation.mirror_url = link.resource.url
+                    representation.local_content_path = paths[link.resource.url]
+                    try:
+                        uploader.mirror_one(representation)
+                        if link.rel == Hyperlink.IMAGE:
+                            height = 300
+                            width = 200
+                            cover_file = primary_identifier.identifier + ".png"
+                            thumbnail_url = uploader.cover_image_url(
+                                data_source_name, primary_identifier, cover_file,
+                                height
+                            )
+                            thumbnail, ignore = representation.scale(
+                                height, width, thumbnail_url, 
+                                Representation.PNG_MEDIA_TYPE
+                            )
+                            uploader.mirror_one(thumbnail)
+                    except ValueError, e:
+                        print "Failed to mirror file %s" % representation.local_content_path
 
-                work, ignore = pool.calculate_work()
-                work.set_presentation_ready()
-                self._db.commit()
-
+            work, ignore = pool.calculate_work()
+            work.set_presentation_ready()
+            self._db.commit()
 
 class CSVExportScript(Script):
 
