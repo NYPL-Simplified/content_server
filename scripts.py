@@ -361,9 +361,8 @@ class CustomOPDSFeedGenerationScript(IdentifierInputScript):
             annotator=ContentServerAnnotator()
         )
 
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S-')
         filename = self.slugify_feed_title(feed_title)
-        filename = os.path.abspath(timestamp + filename + '.opds')
+        filename = os.path.abspath(filename + '.opds')
 
         if parser.upload:
             feed_representation = Representation()
