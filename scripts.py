@@ -4,6 +4,7 @@ import os
 import re
 from datetime import datetime
 from sqlalchemy.orm import lazyload
+from lxml import etree
 
 from core.scripts import Script
 from monitor import GutenbergMonitor
@@ -34,7 +35,9 @@ from core.metadata_layer import (
     ReplacementPolicy,
 )
 from core.opds import AcquisitionFeed
+from core.util.opds_writer import OPDSFeed
 from core.s3 import S3Uploader
+from core.external_search import ExternalSearchIndex
 
 from marc import MARCExtractor
 from opds import ContentServerAnnotator
@@ -312,6 +315,12 @@ class CustomOPDSFeedGenerationScript(Script):
             help='Upload OPDS feed via S3.'
         )
         parser.add_argument(
+            '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
+        )
+        parser.add_argument(
+            '--search-index', help='Upload to this elasticsearch index. elasticsearch-url must also be included'
+        )
+        parser.add_argument(
             'urns', help='A specific identifier urn to process.',
             metavar='URN', nargs='*'
         )
@@ -333,6 +342,9 @@ class CustomOPDSFeedGenerationScript(Script):
             # We can't build an OPDS feed or identify the required
             # Works without this information.
             raise ValueError('Please include all required arguments.')
+
+        if (parsed.search_index and not parsed.search_url) or (parsed.search_url and not parsed.search_index):
+            raise ValueError("Both --search-url and --search-index arguments must be included to upload to a search index")
 
         works = list()
         for urn in parsed.urns:
@@ -358,6 +370,12 @@ class CustomOPDSFeedGenerationScript(Script):
             annotator=ContentServerAnnotator()
         )
 
+        if parsed.search_url and parsed.search_index:
+            OPDSFeed.add_link_to_feed(feed=feed.feed,
+                                      rel="search",
+                                      href=feed_id + "/search",
+                                      type="application/opensearchdescription+xml")
+
         filename = self.slugify_feed_title(feed_title)
         if parsed.upload:
             feed_representation = Representation()
@@ -376,3 +394,27 @@ class CustomOPDSFeedGenerationScript(Script):
             with open(filename, 'w') as f:
                 f.write(unicode(feed))
             self.log.info("OPDS feed saved locally at %s", filename)
+
+        if parsed.search_url and parsed.search_index:
+            search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
+            annotator = ContentServerAnnotator()
+
+            search_documents = []
+
+            # It's slow to do these individually, but this won't run very often.
+            for work in works:
+                doc = work.to_search_document()
+                doc["_index"] = search_client.works_index
+                doc["_type"] = search_client.work_document_type
+                doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
+                search_documents.append(doc)
+
+            success_count, errors = search_client.bulk(
+                search_documents,
+                raise_on_error=False,
+                raise_on_exception=False,
+            )
+
+            if (len(errors) > 0):
+                self.log.error("%i errors uploading to search index" % len(errors))
+            self.log.info("%i documents uploaded to search index %s on %s" % (success_count, parsed.search_index, parsed.search_url))
