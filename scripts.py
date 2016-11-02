@@ -331,24 +331,27 @@ class CustomOPDSFeedGenerationScript(Script):
             # Works without this information.
             raise ValueError('Please include all required arguments.')
 
-        works = list()
-        for urn in parsed.urns:
-            identifier = Identifier.parse_urn(self._db, unicode(urn))[0]
-            license_pool = identifier.licensed_through
-            if not license_pool:
-                self.log.warn("No LicensePool found for %r", identifier)
-                continue
-            if license_pool.suppressed:
-                self.log.warn(
-                    "LicensePool %r has been suppressed and won't be added to "\
-                    "the feed.", license_pool
-                )
-                continue
-            work = license_pool.work
-            if not work:
-                self.log.warn("No Work found for %r", license_pool)
-                continue
-            works.append(work)
+        identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
+                       for urn in parsed.urns]
+        identifier_ids = [identifier.id for identifier in identifiers]
+
+        # TODO: Identify missing Identifiers in a different way and stop
+        # querying for them alongside Works.
+        works_identifiers = self._db.query(Work, Identifier).\
+                select_from(LicensePool).join(LicensePool.work).\
+                join(LicensePool.identifier).\
+                filter(Identifier.id.in_(identifier_ids)).\
+                filter(LicensePool.suppressed != True).\
+                enable_eagerloads(False)
+        works = [w[0] for w in works_identifiers.all()]
+
+        if len(works) != len(identifiers):
+            # Log errors for any identifiers that haven't been added to feed
+            # for whatever reason.
+            included_identifiers = set([i[1] for i in works_identifiers.all()])
+            missing_identifiers = set(identifiers).difference(included_identifiers)
+            if missing_identifiers:
+                self.log_missing_identifiers(missing_identifiers)
 
         feed = AcquisitionFeed(
             self._db, feed_title, feed_id, works,
@@ -373,3 +376,24 @@ class CustomOPDSFeedGenerationScript(Script):
             with open(filename, 'w') as f:
                 f.write(unicode(feed))
             self.log.info("OPDS feed saved locally at %s", filename)
+
+    def log_missing_identifiers(self, missing):
+        details = ""
+        bullet = "\n    - "
+
+        for identifier in missing:
+            license_pool = identifier.licensed_through
+            if not license_pool:
+                details += (bullet + "%r : No LicensePool found." % identifier)
+                continue
+            if license_pool.suppressed:
+                details +=  (bullet + "%r : LicensePool has been suppressed." % license_pool)
+                continue
+            work = license_pool.work
+            if not work:
+                details += (bullet + "%r : No Work found." % license_pool)
+                continue
+        self.log.warn(
+            "%i identifiers could not be added to the feed. %s",
+            len(missing), details
+        )
