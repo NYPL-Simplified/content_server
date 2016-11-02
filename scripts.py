@@ -3,12 +3,16 @@ import csv
 import os
 import re
 from datetime import datetime
+from nose.tools import set_trace
 from sqlalchemy.orm import lazyload
 
+from core.classifier import Classifier
 from core.scripts import Script
-from monitor import GutenbergMonitor
-from coverage import (
-    GutenbergEPUBCoverageProvider,
+from core.metadata_layer import (
+    LinkData,
+    FormatData,
+    CirculationData,
+    ReplacementPolicy,
 )
 from core.model import (
     DataSource,
@@ -24,21 +28,14 @@ from core.model import (
     RightsStatus,
     Work,
 )
-from core.classifier import Classifier
 from core.monitor import PresentationReadyMonitor
-
-from core.metadata_layer import (
-    LinkData,
-    FormatData,
-    CirculationData,
-    ReplacementPolicy,
-)
 from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
 
+from coverage import GutenbergEPUBCoverageProvider
 from marc import MARCExtractor
+from monitor import GutenbergMonitor
 from opds import ContentServerAnnotator
-from nose.tools import set_trace
 
 
 class GutenbergMonitorScript(Script):
