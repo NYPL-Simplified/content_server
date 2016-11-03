@@ -8,6 +8,7 @@ from sqlalchemy.orm import lazyload
 
 from core.classifier import Classifier
 from core.scripts import Script
+from core.lane import Facets
 from core.metadata_layer import (
     LinkData,
     FormatData,
@@ -32,6 +33,7 @@ from core.monitor import PresentationReadyMonitor
 from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
 
+from controller import ContentServer
 from coverage import GutenbergEPUBCoverageProvider
 from marc import MARCExtractor
 from monitor import GutenbergMonitor
@@ -297,6 +299,21 @@ class CSVExportScript(Script):
 
 class CustomOPDSFeedGenerationScript(Script):
 
+    # Feeds ordered by this Order facet will be considered the default.
+    DEFAULT_FACET = Facets.ORDER_TITLE
+
+    DEFAULT_ENABLED_FACETS = {
+        Facets.ORDER_FACET_GROUP_NAME : [
+            Facets.ORDER_TITLE, Facets.ORDER_AUTHOR
+        ],
+        Facets.AVAILABILITY_FACET_GROUP_NAME : [
+            Facets.AVAILABLE_OPEN_ACCESS
+        ],
+        Facets.COLLECTION_FACET_GROUP_NAME : [
+            Facets.COLLECTION_MAIN
+        ]
+    }
+
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
@@ -337,45 +354,51 @@ class CustomOPDSFeedGenerationScript(Script):
 
         # TODO: Identify missing Identifiers in a different way and stop
         # querying for them alongside Works.
-        works_identifiers = self._db.query(Work, Identifier).\
+        works_identifiers_qu = self._db.query(Work, Identifier).\
                 select_from(LicensePool).join(LicensePool.work).\
-                join(LicensePool.identifier).\
+                join(LicensePool.identifier).join(Work.presentation_edition).\
                 filter(Identifier.id.in_(identifier_ids)).\
                 filter(LicensePool.suppressed != True).\
                 enable_eagerloads(False)
-        works = [w[0] for w in works_identifiers.all()]
+        works = [w[0] for w in works_identifiers_qu.all()]
 
         if len(works) != len(identifiers):
             # Log errors for any identifiers that haven't been added to feed
             # for whatever reason.
-            included_identifiers = set([i[1] for i in works_identifiers.all()])
+            included_identifiers = set([i[1] for i in works_identifiers_qu.all()])
             missing_identifiers = set(identifiers).difference(included_identifiers)
             if missing_identifiers:
                 self.log_missing_identifiers(missing_identifiers)
 
-        feed = AcquisitionFeed(
-            self._db, feed_title, feed_id, works,
-            annotator=ContentServerAnnotator()
+        # Create feeds for all enabled facets.
+        feeds = self.create_faceted_feeds(
+            works_identifiers_qu, feed_title, feed_id
         )
 
-        filename = self.slugify_feed_title(feed_title)
-        if parsed.upload:
-            feed_representation = Representation()
-            feed_representation.set_fetched_content(
-                unicode(feed), content_path=filename
-            )
+        base_filename = self.slugify_feed_title(feed_title)
+        for feed_facet_str, feed in feeds.items():
+            if feed_facet_str == 'default':
+                filename = base_filename
+            else:
+                filename = base_filename + '_' + feed_facet_str
 
-            uploader = uploader or S3Uploader()
-            feed_representation.mirror_url = uploader.feed_url(filename)
+            if parsed.upload:
+                feed_representation = Representation()
+                feed_representation.set_fetched_content(
+                    unicode(feed), content_path=filename
+                )
 
-            self._db.add(feed_representation)
-            self._db.commit()
-            uploader.mirror_one(feed_representation)
-        else:
-            filename = os.path.abspath(filename + '.opds')
-            with open(filename, 'w') as f:
-                f.write(unicode(feed))
-            self.log.info("OPDS feed saved locally at %s", filename)
+                uploader = uploader or S3Uploader()
+                feed_representation.mirror_url = uploader.feed_url(filename)
+
+                self._db.add(feed_representation)
+                self._db.commit()
+                uploader.mirror_one(feed_representation)
+            else:
+                filename = os.path.abspath(filename + '.opds')
+                with open(filename, 'w') as f:
+                    f.write(unicode(feed))
+                self.log.info("OPDS feed saved locally at %s", filename)
 
     def log_missing_identifiers(self, missing):
         details = ""
@@ -397,3 +420,51 @@ class CustomOPDSFeedGenerationScript(Script):
             "%i identifiers could not be added to the feed. %s",
             len(missing), details
         )
+
+    def create_faceted_feeds(self, works_query, feed_title, feed_id):
+        """Creates feeds for facets that may be required
+
+        :return: A dictionary of filenames pointing to feed objects
+        """
+        static_facets = Facets(
+            Facets.COLLECTION_MAIN, Facets.AVAILABLE_OPEN_ACCESS,
+            Facets.ORDER_TITLE, enabled_facets=self.DEFAULT_ENABLED_FACETS
+        )
+        static_facet_groups = list(static_facets.facet_groups)
+
+        annotator = ContentServerAnnotator()
+        feeds = dict()
+        for facet_group in static_facet_groups:
+            ordered_by, facet_obj = facet_group[1:3]
+
+            faceted_query = facet_obj.apply(self._db, works_query)
+            works = [result[0] for result in faceted_query.all()]
+            feed = AcquisitionFeed(
+                self._db, feed_title, feed_id, works, annotator=annotator
+            )
+
+            # Add the facet links to the feed.
+            context = self.create_app_context(feed_id)
+            for link_args in AcquisitionFeed.facet_links(annotator, facet_obj):
+                AcquisitionFeed.add_link_to_feed(feed=feed.feed, **link_args)
+            context.pop()
+
+            facet_key = 'ordered-by-'+ordered_by
+            if ordered_by == self.DEFAULT_FACET:
+                facet_key = 'default'
+            feeds[facet_key] = feed
+        return feeds
+
+    def create_app_context(self, feed_id):
+        """Push a fake app context so the feed can create links
+
+        :return: The app context, so that it can be removed later.
+        """
+        os.environ['AUTOINITIALIZE'] = 'False'
+        from app import app
+        del os.environ['AUTOINITIALIZE']
+
+        app.content_server = ContentServer(_db=self._db)
+        context = app.test_request_context(base_url=feed_id)
+        context.push()
+        return context

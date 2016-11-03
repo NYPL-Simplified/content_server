@@ -62,6 +62,10 @@ class ContentServerAnnotator(VerboseAnnotator):
     def top_level_title(self):
         return "All Books"
 
+    def facet_url(self, facets):
+        kwargs = dict(facets.items())
+        return cdn_url_for('feed', _external=True, **kwargs)
+
     def feed_url(self, lane, facets, pagination):
         kwargs = dict(facets.items())
         kwargs.update(dict(pagination.items()))
