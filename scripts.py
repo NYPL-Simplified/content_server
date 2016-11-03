@@ -32,6 +32,7 @@ from core.model import (
 from core.monitor import PresentationReadyMonitor
 from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
+from core.util import fast_query_count
 
 from controller import ContentServer
 from coverage import GutenbergEPUBCoverageProvider
@@ -352,7 +353,7 @@ class CustomOPDSFeedGenerationScript(Script):
                        for urn in parsed.urns]
         identifier_ids = [identifier.id for identifier in identifiers]
 
-        # TODO: Identify missing Identifiers in a different way and stop
+        # TODO: Find missing Identifiers in a different way and stop
         # querying for them alongside Works.
         works_identifiers_qu = self._db.query(Work, Identifier).\
                 select_from(LicensePool).join(LicensePool.work).\
@@ -360,15 +361,9 @@ class CustomOPDSFeedGenerationScript(Script):
                 filter(Identifier.id.in_(identifier_ids)).\
                 filter(LicensePool.suppressed != True).\
                 enable_eagerloads(False)
-        works = [w[0] for w in works_identifiers_qu.all()]
 
-        if len(works) != len(identifiers):
-            # Log errors for any identifiers that haven't been added to feed
-            # for whatever reason.
-            included_identifiers = set([i[1] for i in works_identifiers_qu.all()])
-            missing_identifiers = set(identifiers).difference(included_identifiers)
-            if missing_identifiers:
-                self.log_missing_identifiers(missing_identifiers)
+        if fast_query_count(works_identifiers_qu) != len(identifiers):
+            self.log_missing_identifiers(identifiers, works_identifiers_qu)
 
         # Create feeds for all enabled facets.
         feeds = self.create_faceted_feeds(
@@ -400,25 +395,32 @@ class CustomOPDSFeedGenerationScript(Script):
                     f.write(unicode(feed))
                 self.log.info("OPDS feed saved locally at %s", filename)
 
-    def log_missing_identifiers(self, missing):
-        details = ""
-        bullet = "\n    - "
+    def log_missing_identifiers(self, requested_identifiers, included_qu):
+        """Logs details about requested identifiers that could not be added
+        to the static feeds for whatever reason.
+        """
+        included_identifiers = set([i[1] for i in included_qu])
+        missing = set(requested_identifiers).difference(included_identifiers)
+        if not missing:
+            return
 
+        detail_list = ""
+        bullet = "\n    - "
         for identifier in missing:
             license_pool = identifier.licensed_through
             if not license_pool:
-                details += (bullet + "%r : No LicensePool found." % identifier)
+                detail_list += (bullet + "%r : No LicensePool found." % identifier)
                 continue
             if license_pool.suppressed:
-                details +=  (bullet + "%r : LicensePool has been suppressed." % license_pool)
+                detail_list +=  (bullet + "%r : LicensePool has been suppressed." % license_pool)
                 continue
             work = license_pool.work
             if not work:
-                details += (bullet + "%r : No Work found." % license_pool)
+                detail_list += (bullet + "%r : No Work found." % license_pool)
                 continue
         self.log.warn(
             "%i identifiers could not be added to the feed. %s",
-            len(missing), details
+            len(missing), detail_list
         )
 
     def create_faceted_feeds(self, works_query, feed_title, feed_id):
@@ -438,7 +440,7 @@ class CustomOPDSFeedGenerationScript(Script):
             ordered_by, facet_obj = facet_group[1:3]
 
             faceted_query = facet_obj.apply(self._db, works_query)
-            works = [result[0] for result in faceted_query.all()]
+            works = [result[0] for result in faceted_query]
             feed = AcquisitionFeed(
                 self._db, feed_title, feed_id, works, annotator=annotator
             )
