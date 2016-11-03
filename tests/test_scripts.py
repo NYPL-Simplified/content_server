@@ -1,5 +1,6 @@
 import feedparser
 from nose.tools import set_trace, eq_
+from os import path
 
 from . import DatabaseTest
 
@@ -76,17 +77,19 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         )
 
         eq_(True, isinstance(result, dict))
-        eq_(['default', 'ordered-by-author'], sorted(result.keys()))
-        for feed in result.values():
+        eq_(['test-feed', 'test-feed_author'], sorted(result.keys()))
+        for key, feed in result.items():
             eq_(True, isinstance(feed, AcquisitionFeed))
             parsed = feedparser.parse(unicode(feed))
             [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
-
-            if active_facet_link.get('title') == 'Title':
-                # The entries should be sorted by title.
+            if key == 'test-feed':
+                # The entries are sorted by title, by default.
+                eq_('Title', active_facet_link.get('title'))
                 titles = [e.title for e in parsed.entries]
                 eq_(['Alpha', 'Omega', 'Zeta'], titles)
 
-            if active_facet_link.get('title') == 'Author':
+            if key == 'test-feed_author':
+                # The entries can also be sorted by author.
+                eq_('Author', active_facet_link.get('title'))
                 authors = [e.simplified_sort_name for e in parsed.entries]
                 eq_(['Iota', 'Phi', 'Theta'], authors)

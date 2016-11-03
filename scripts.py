@@ -38,7 +38,7 @@ from controller import ContentServer
 from coverage import GutenbergEPUBCoverageProvider
 from marc import MARCExtractor
 from monitor import GutenbergMonitor
-from opds import ContentServerAnnotator
+from opds import StaticFeedAnnotator
 
 
 class GutenbergMonitorScript(Script):
@@ -300,8 +300,8 @@ class CSVExportScript(Script):
 
 class CustomOPDSFeedGenerationScript(Script):
 
-    # Feeds ordered by this Order facet will be considered the default.
-    DEFAULT_FACET = Facets.ORDER_TITLE
+    # Feeds ordered by this facet will be considered the default.
+    DEFAULT_ORDER = Facets.ORDER_TITLE
 
     DEFAULT_ENABLED_FACETS = {
         Facets.ORDER_FACET_GROUP_NAME : [
@@ -370,13 +370,7 @@ class CustomOPDSFeedGenerationScript(Script):
             works_identifiers_qu, feed_title, feed_id
         )
 
-        base_filename = self.slugify_feed_title(feed_title)
-        for feed_facet_str, feed in feeds.items():
-            if feed_facet_str == 'default':
-                filename = base_filename
-            else:
-                filename = base_filename + '_' + feed_facet_str
-
+        for filename, feed in feeds.items():
             if parsed.upload:
                 feed_representation = Representation()
                 feed_representation.set_fetched_content(
@@ -434,7 +428,11 @@ class CustomOPDSFeedGenerationScript(Script):
         )
         static_facet_groups = list(static_facets.facet_groups)
 
-        annotator = ContentServerAnnotator()
+        base_filename = self.slugify_feed_title(feed_title)
+        annotator = StaticFeedAnnotator(
+            feed_id, base_filename, default_order=self.DEFAULT_ORDER
+        )
+
         feeds = dict()
         for facet_group in static_facet_groups:
             ordered_by, facet_obj = facet_group[1:3]
@@ -451,10 +449,10 @@ class CustomOPDSFeedGenerationScript(Script):
                 AcquisitionFeed.add_link_to_feed(feed=feed.feed, **link_args)
             context.pop()
 
-            facet_key = 'ordered-by-'+ordered_by
-            if ordered_by == self.DEFAULT_FACET:
-                facet_key = 'default'
-            feeds[facet_key] = feed
+            key = base_filename
+            if ordered_by != self.DEFAULT_ORDER:
+                key += ('_' + ordered_by)
+            feeds[key] = feed
         return feeds
 
     def create_app_context(self, feed_id):
