@@ -38,13 +38,10 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         uploader = DummyS3Uploader()
         cmd_args = ['-t', 'Test Feed', '-d', 'mta.librarysimplified.org',
                     '-u', no_pool, urn1, urn2]
-
-        # Run the script.
         script.run(uploader=uploader, cmd_args=cmd_args)
 
         # Feeds are created and uploaded for the main feed and its facets.
         eq_(2, len(uploader.content))
-
         for feed in uploader.content:
             parsed = feedparser.parse(feed)
             eq_(u'mta.librarysimplified.org', parsed.feed.id)
@@ -59,7 +56,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
             [entry] = parsed.entries
             eq_(requested.title, entry.title)
 
-        # There should also be a representations saved to the database
+        # There should also be a Representation saved to the database
         # for each feed.
         representations = self._db.query(Representation).all()
         # Representations with "Dummy content" are created in _license_pool()
