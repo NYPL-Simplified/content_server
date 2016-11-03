@@ -34,7 +34,6 @@ from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
 from core.util import fast_query_count
 
-from controller import ContentServer
 from coverage import GutenbergEPUBCoverageProvider
 from marc import MARCExtractor
 from monitor import GutenbergMonitor
@@ -444,27 +443,11 @@ class CustomOPDSFeedGenerationScript(Script):
             )
 
             # Add the facet links to the feed.
-            context = self.create_app_context(feed_id)
             for link_args in AcquisitionFeed.facet_links(annotator, facet_obj):
                 AcquisitionFeed.add_link_to_feed(feed=feed.feed, **link_args)
-            context.pop()
 
             key = base_filename
             if ordered_by != self.DEFAULT_ORDER:
                 key += ('_' + ordered_by)
             feeds[key] = feed
         return feeds
-
-    def create_app_context(self, feed_id):
-        """Push a fake app context so the feed can create links
-
-        :return: The app context, so that it can be removed later.
-        """
-        os.environ['AUTOINITIALIZE'] = 'False'
-        from app import app
-        del os.environ['AUTOINITIALIZE']
-
-        app.content_server = ContentServer(_db=self._db)
-        context = app.test_request_context(base_url=feed_id)
-        context.push()
-        return context
