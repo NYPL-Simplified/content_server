@@ -465,7 +465,7 @@ class CustomOPDSFeedGenerationScript(Script):
         :return: A dictionary of filenames pointing to feed objects
         """
         static_facets = Facets(
-            Facets.COLLECTION_MAIN, Facets.AVAILABLE_OPEN_ACCESS,
+            Facets.COLLECTION_FULL, Facets.AVAILABLE_OPEN_ACCESS,
             Facets.ORDER_TITLE, enabled_facets=self.DEFAULT_ENABLED_FACETS
         )
         static_facet_groups = list(static_facets.facet_groups)
@@ -480,6 +480,7 @@ class CustomOPDSFeedGenerationScript(Script):
             ordered_by, facet_obj = facet_group[1:3]
 
             faceted_query = facet_obj.apply(self._db, works_query)
+
             works = [result[0] for result in faceted_query]
             feed = AcquisitionFeed(
                 self._db, feed_title, feed_id, works, annotator=annotator
