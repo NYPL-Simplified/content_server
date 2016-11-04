@@ -96,3 +96,26 @@ class AllCoverLinksAnnotator(ContentServerAnnotator):
             if cover.scaled_path:
                 thumbnails.append(cover.scaled_path)
         return thumbnails, full
+
+
+class StaticFeedAnnotator(ContentServerAnnotator):
+
+    """An Annotator to work with static feeds generated via script"""
+
+    def __init__(self, base_url, base_filename, default_order=None):
+        self.default_order = default_order
+        self.base_url = base_url
+
+        if base_filename.endswith('.opds'):
+            base_filename = base_filename[:-5]
+        self.base_filename = base_filename
+
+    def facet_url(self, facets):
+        ordered_by = list(facets.items())[0][1]
+
+        filename = self.base_filename
+        if ordered_by != self.default_order:
+            filename += ('_'+ordered_by)
+        filename += '.opds'
+
+        return self.base_url + '/' + filename

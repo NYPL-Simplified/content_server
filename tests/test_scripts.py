@@ -1,8 +1,15 @@
 import feedparser
 from nose.tools import set_trace, eq_
+from os import path
 
 from . import DatabaseTest
 
+from ..core.model import (
+    Edition,
+    Representation,
+    Work,
+)
+from ..core.opds import AcquisitionFeed
 from ..core.s3 import DummyS3Uploader
 
 from ..scripts import CustomOPDSFeedGenerationScript
@@ -32,12 +39,57 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         uploader = DummyS3Uploader()
         cmd_args = ['-t', 'Test Feed', '-d', 'mta.librarysimplified.org',
                     '-u', no_pool, urn1, urn2]
-
         script.run(uploader=uploader, cmd_args=cmd_args)
-        parsed = feedparser.parse(uploader.content[0])
-        eq_(u'mta.librarysimplified.org', parsed.feed.id)
-        eq_(u'Test Feed', parsed.feed.title)
 
-        # Only the non-suppressed, license_pooled work we requested is in the entry feed.
-        [entry] = parsed.entries
-        eq_(requested.title, entry.title)
+        # Feeds are created and uploaded for the main feed and its facets.
+        eq_(2, len(uploader.content))
+        for feed in uploader.content:
+            parsed = feedparser.parse(feed)
+            eq_(u'mta.librarysimplified.org', parsed.feed.id)
+            eq_(u'Test Feed', parsed.feed.title)
+
+            # There are links for the different facets.
+            links = parsed.feed.links
+            eq_(2, len([l for l in links if l.get('facetgroup')]))
+
+            # Only the non-suppressed, license_pooled works we requested
+            # are in the entry feed.
+            [entry] = parsed.entries
+            eq_(requested.title, entry.title)
+
+        # There should also be a Representation saved to the database
+        # for each feed.
+        representations = self._db.query(Representation).all()
+        # Representations with "Dummy content" are created in _license_pool()
+        # for each working. We'll ignore these.
+        representations = [r for r in representations if r.content != 'Dummy content']
+        eq_(2, len(representations))
+
+    def test_create_faceted_feeds(self):
+        omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
+        alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
+        zeta = self._work(title='Zeta', authors='Phi', with_open_access_download=True)
+
+        qu = self._db.query(Work, Edition).join(Work.presentation_edition)
+        script = CustomOPDSFeedGenerationScript(_db=self._db)
+        result = script.create_faceted_feeds(
+            qu, 'Test Feed', 'https://mta.librarysimplified.org'
+        )
+
+        eq_(True, isinstance(result, dict))
+        eq_(['test-feed', 'test-feed_author'], sorted(result.keys()))
+        for key, feed in result.items():
+            eq_(True, isinstance(feed, AcquisitionFeed))
+            parsed = feedparser.parse(unicode(feed))
+            [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
+            if key == 'test-feed':
+                # The entries are sorted by title, by default.
+                eq_('Title', active_facet_link.get('title'))
+                titles = [e.title for e in parsed.entries]
+                eq_(['Alpha', 'Omega', 'Zeta'], titles)
+
+            if key == 'test-feed_author':
+                # The entries can also be sorted by author.
+                eq_('Author', active_facet_link.get('title'))
+                authors = [e.simplified_sort_name for e in parsed.entries]
+                eq_(['Iota', 'Phi', 'Theta'], authors)
