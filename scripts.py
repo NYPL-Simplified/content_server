@@ -8,7 +8,10 @@ from sqlalchemy.orm import lazyload
 
 from core.classifier import Classifier
 from core.scripts import Script
-from core.lane import Facets
+from core.lane import (
+    Facets,
+    Pagination,
+)
 from core.metadata_layer import (
     LinkData,
     FormatData,
@@ -326,6 +329,10 @@ class CustomOPDSFeedGenerationScript(Script):
             help='Upload OPDS feed via S3.'
         )
         parser.add_argument(
+            '--page_size', type=int,
+            help='The number of entries in each page feed (default = 50)'
+        )
+        parser.add_argument(
             'urns', help='A specific identifier urn to process.',
             metavar='URN', nargs='*'
         )
@@ -342,6 +349,7 @@ class CustomOPDSFeedGenerationScript(Script):
         parsed = self.arg_parser().parse_args(cmd_args)
         feed_title = unicode(parsed.title)
         feed_id = unicode(parsed.domain)
+        page_size = parsed.page_size or Pagination.DEFAULT_SIZE
 
         if not (feed_title and feed_id and parsed.urns):
             # We can't build an OPDS feed or identify the required
@@ -361,27 +369,33 @@ class CustomOPDSFeedGenerationScript(Script):
         if fast_query_count(works_qu) != len(identifier_ids):
             self.log_missing_identifiers(identifier_ids, works_qu)
 
+        pagination = Pagination(size=page_size)
+
         # Create feeds for all enabled facets.
-        feeds = self.create_faceted_feeds(works_qu, feed_title, feed_id)
+        feeds = self.create_feeds(works_qu, feed_title, feed_id, pagination)
 
-        for filename, feed in feeds.items():
-            if parsed.upload:
-                feed_representation = Representation()
-                feed_representation.set_fetched_content(
-                    unicode(feed), content_path=filename
-                )
+        for base_filename, feed_pages in feeds.items():
+            for index, page in enumerate(feed_pages):
+                filename = base_filename
+                if index != 0:
+                    filename += '_%i' % (index+1)
+                if parsed.upload:
+                    feed_representation = Representation()
+                    feed_representation.set_fetched_content(
+                        unicode(page), content_path=filename
+                    )
 
-                uploader = uploader or S3Uploader()
-                feed_representation.mirror_url = uploader.feed_url(filename)
+                    uploader = uploader or S3Uploader()
+                    feed_representation.mirror_url = uploader.feed_url(filename)
 
-                self._db.add(feed_representation)
-                self._db.commit()
-                uploader.mirror_one(feed_representation)
-            else:
-                filename = os.path.abspath(filename + '.opds')
-                with open(filename, 'w') as f:
-                    f.write(unicode(feed))
-                self.log.info("OPDS feed saved locally at %s", filename)
+                    self._db.add(feed_representation)
+                    self._db.commit()
+                    uploader.mirror_one(feed_representation)
+                else:
+                    filename = os.path.abspath(filename + '.opds')
+                    with open(filename, 'w') as f:
+                        f.write(unicode(page))
+                    self.log.info("OPDS feed saved locally at %s", filename)
 
     def log_missing_identifiers(self, requested_ids, works_qu):
         """Logs details about requested identifiers that could not be added
@@ -416,7 +430,7 @@ class CustomOPDSFeedGenerationScript(Script):
             len(missing_ids), detail_list
         )
 
-    def create_faceted_feeds(self, works_query, feed_title, feed_id):
+    def create_feeds(self, works_query, feed_title, feed_id, pagination):
         """Creates feeds for facets that may be required
 
         :return: A dictionary of filenames pointing to feed objects
@@ -437,17 +451,54 @@ class CustomOPDSFeedGenerationScript(Script):
             ordered_by, facet_obj = facet_group[1:3]
 
             faceted_query = facet_obj.apply(self._db, works_query)
-            works = [result[0] for result in faceted_query]
-            feed = AcquisitionFeed(
-                self._db, feed_title, feed_id, works, annotator=annotator
-            )
 
-            # Add the facet links to the feed.
-            for link_args in AcquisitionFeed.facet_links(annotator, facet_obj):
-                AcquisitionFeed.add_link_to_feed(feed=feed.feed, **link_args)
+            paged_feeds = list(self.create_feed_pages(
+                faceted_query, pagination, feed_title, feed_id,
+                annotator, facet_obj
+            ))
+
+            # Add the facet links to the feeds.
+            for feed in paged_feeds:
+                for link_args in AcquisitionFeed.facet_links(annotator, facet_obj):
+                    AcquisitionFeed.add_link_to_feed(feed=feed.feed, **link_args)
 
             key = base_filename
             if ordered_by != self.DEFAULT_ORDER:
                 key += ('_' + ordered_by)
-            feeds[key] = feed
+            feeds[key] = paged_feeds
         return feeds
+
+    def create_feed_pages(self, query, pagination, feed_title, feed_id,
+                          annotator, facets):
+        feed_pages = list()
+        previous_page = pagination.previous_page
+        while not previous_page or previous_page.has_next_page:
+            paged_query = pagination.apply(query)
+            works = paged_query.all()
+
+            feed = AcquisitionFeed(
+                self._db, feed_title, feed_id, works, annotator=annotator
+            )
+
+            # Add links for next and previous pages.
+            if pagination.has_next_page:
+                AcquisitionFeed.add_link_to_feed(
+                    feed=feed.feed, rel='next',
+                    href=annotator.feed_url(facets, pagination.next_page)
+                )
+            if pagination.offset > 0:
+                AcquisitionFeed.add_link_to_feed(
+                    feed=feed.feed, rel='first',
+                    href=annotator.feed_url(facets, pagination.first_page)
+                )
+            if pagination.previous_page:
+                AcquisitionFeed.add_link_to_feed(
+                    feed=feed.feed, rel='previous',
+                    href=annotator.feed_url(facets, pagination.previous_page)
+                )
+
+            yield feed
+
+            # Reset values to determine if next page should be created.
+            previous_page = pagination
+            pagination = pagination.next_page

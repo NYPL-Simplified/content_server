@@ -4,14 +4,21 @@ from os import path
 
 from . import DatabaseTest
 
+from ..core.lane import (
+    Facets,
+    Pagination,
+)
 from ..core.model import (
     Edition,
+    Identifier,
+    LicensePool,
     Representation,
     Work,
 )
 from ..core.opds import AcquisitionFeed
 from ..core.s3 import DummyS3Uploader
 
+from ..opds import StaticFeedAnnotator
 from ..scripts import CustomOPDSFeedGenerationScript
 
 class TestCustomOPDSFeedGenerationScript(DatabaseTest):
@@ -65,20 +72,21 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         representations = [r for r in representations if r.content != 'Dummy content']
         eq_(2, len(representations))
 
-    def test_create_faceted_feeds(self):
+    def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
         alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
         zeta = self._work(title='Zeta', authors='Phi', with_open_access_download=True)
 
-        qu = self._db.query(Work, Edition).join(Work.presentation_edition)
+        qu = self._db.query(Work).join(Work.presentation_edition)
         script = CustomOPDSFeedGenerationScript(_db=self._db)
-        result = script.create_faceted_feeds(
-            qu, 'Test Feed', 'https://mta.librarysimplified.org'
+        result = script.create_feeds(
+            qu, 'Test Feed', 'https://mta.librarysimplified.org',
+            Pagination.default()
         )
 
         eq_(True, isinstance(result, dict))
         eq_(['test-feed', 'test-feed_author'], sorted(result.keys()))
-        for key, feed in result.items():
+        for key, [feed] in result.items():
             eq_(True, isinstance(feed, AcquisitionFeed))
             parsed = feedparser.parse(unicode(feed))
             [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
@@ -93,3 +101,44 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
                 eq_('Author', active_facet_link.get('title'))
                 authors = [e.simplified_sort_name for e in parsed.entries]
                 eq_(['Iota', 'Phi', 'Theta'], authors)
+
+    def test_create_feed_pages(self):
+        w1 = self._work(with_open_access_download=True)
+        w2 = self._work(with_open_access_download=True)
+
+        pagination = Pagination(size=1)
+        query = self._db.query(Work).order_by(Work.id)
+        facet = Facets('main', 'always', 'title')
+        annotator = StaticFeedAnnotator('https://ls.org', 'test-feed')
+
+        script = CustomOPDSFeedGenerationScript(_db=self._db)
+        result = list(script.create_feed_pages(
+            query, pagination, 'https://ls.org', 'test-feed', annotator,
+            facet
+        ))
+        # Two feeds are returned with the proper links.
+        [first, second] = result
+        def links_by_rel(parsed_feed, rel):
+            return [l for l in parsed_feed.feed.links if l['rel']==rel]
+
+        parsed = feedparser.parse(unicode(first))
+        [entry] = parsed.entries
+        eq_(w1.title, entry.title)
+        eq_(w1.author, entry.simplified_sort_name)
+
+        [next_link] = links_by_rel(parsed, 'next')
+        eq_(next_link.href, 'https://ls.org/test-feed_title_2.opds')
+        eq_([], links_by_rel(parsed, 'previous'))
+        eq_([], links_by_rel(parsed, 'first'))
+
+        parsed = feedparser.parse(unicode(second))
+        [entry] = parsed.entries
+        eq_(w2.title, entry.title)
+        eq_(w2.author, entry.simplified_sort_name)
+
+        [previous_link] = links_by_rel(parsed, 'previous')
+        [first_link] = links_by_rel(parsed, 'first')
+        first = 'https://ls.org/test-feed_title.opds'
+        eq_(previous_link.href, first)
+        eq_(first_link.href, first)
+        eq_([], links_by_rel(parsed, 'next'))
