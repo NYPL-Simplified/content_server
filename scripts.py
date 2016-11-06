@@ -348,26 +348,21 @@ class CustomOPDSFeedGenerationScript(Script):
             # Works without this information.
             raise ValueError('Please include all required arguments.')
 
-        identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
-                       for urn in parsed.urns]
-        identifier_ids = [identifier.id for identifier in identifiers]
+        identifier_ids = [Identifier.parse_urn(self._db, unicode(urn))[0].id
+                          for urn in parsed.urns]
 
-        # TODO: Find missing Identifiers in a different way and stop
-        # querying for them alongside Works.
-        works_identifiers_qu = self._db.query(Work, Identifier).\
+        works_qu = self._db.query(Work).\
                 select_from(LicensePool).join(LicensePool.work).\
                 join(LicensePool.identifier).join(Work.presentation_edition).\
                 filter(Identifier.id.in_(identifier_ids)).\
                 filter(LicensePool.suppressed != True).\
                 enable_eagerloads(False)
 
-        if fast_query_count(works_identifiers_qu) != len(identifiers):
-            self.log_missing_identifiers(identifiers, works_identifiers_qu)
+        if fast_query_count(works_qu) != len(identifier_ids):
+            self.log_missing_identifiers(identifier_ids, works_qu)
 
         # Create feeds for all enabled facets.
-        feeds = self.create_faceted_feeds(
-            works_identifiers_qu, feed_title, feed_id
-        )
+        feeds = self.create_faceted_feeds(works_qu, feed_title, feed_id)
 
         for filename, feed in feeds.items():
             if parsed.upload:
@@ -388,18 +383,22 @@ class CustomOPDSFeedGenerationScript(Script):
                     f.write(unicode(feed))
                 self.log.info("OPDS feed saved locally at %s", filename)
 
-    def log_missing_identifiers(self, requested_identifiers, included_qu):
+    def log_missing_identifiers(self, requested_ids, works_qu):
         """Logs details about requested identifiers that could not be added
         to the static feeds for whatever reason.
         """
-        included_identifiers = set([i[1] for i in included_qu])
-        missing = set(requested_identifiers).difference(included_identifiers)
-        if not missing:
+        included_ids_qu = works_qu.statement.with_only_columns([Identifier.id])
+        included_ids = self._db.execute(included_ids_qu)
+        included_ids = [i[0] for i in included_ids.fetchall()]
+
+        missing_ids = set(requested_ids).difference(included_ids)
+        if not missing_ids:
             return
 
         detail_list = ""
         bullet = "\n    - "
-        for identifier in missing:
+        for id in missing_ids:
+            identifier = self._db.query(Identifier).filter(Identifier.id==id).one()
             license_pool = identifier.licensed_through
             if not license_pool:
                 detail_list += (bullet + "%r : No LicensePool found." % identifier)
@@ -411,9 +410,10 @@ class CustomOPDSFeedGenerationScript(Script):
             if not work:
                 detail_list += (bullet + "%r : No Work found." % license_pool)
                 continue
+            detail_list += (bullet + "%r : Unknown error.")
         self.log.warn(
             "%i identifiers could not be added to the feed. %s",
-            len(missing), detail_list
+            len(missing_ids), detail_list
         )
 
     def create_faceted_feeds(self, works_query, feed_title, feed_id):
