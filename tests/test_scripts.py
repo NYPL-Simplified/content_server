@@ -74,6 +74,30 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         representations = [r for r in representations if r.content != 'Dummy content']
         eq_(2, len(representations))
 
+    def test_run_multipage_filenames(self):
+        """Confirm files are uploaded to S3 as expected"""
+
+        w1 = self._work(with_open_access_download=True)
+        w2 = self._work(with_open_access_download=True)
+        urns = [work.license_pools[0].identifier.urn for work in [w1, w2]]
+
+        uploader = DummyS3Uploader()
+        script = CustomOPDSFeedGenerationScript(_db=self._db)
+        cmd_args = ['-t', 'Test Feed', '-d', 'http://ls.org',
+                    '--page_size', '1', '-u', urns[0], urns[1]]
+
+        script.run(uploader=uploader, cmd_args=cmd_args)
+
+        eq_(4, len(uploader.uploaded))
+
+        expected_filenames = [
+            'test-feed.opds', 'test-feed_2.opds', 'test-feed_author.opds',
+            'test-feed_author_2.opds'
+        ]
+        expected = [uploader.content_root()+f for f in expected_filenames]
+        result = [rep.mirror_url for rep in uploader.uploaded]
+        eq_(sorted(expected), sorted(result))
+
     def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
         alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
