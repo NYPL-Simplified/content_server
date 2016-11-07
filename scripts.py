@@ -319,7 +319,7 @@ class CustomOPDSFeedGenerationScript(Script):
     }
 
     # Static feeds are refreshed each time they're created, so this
-    # type will primarily just to distinguish them in the database.
+    # type is primarily just to distinguish them in the database.
     CACHE_TYPE = 'static'
 
     @classmethod
@@ -423,7 +423,7 @@ class CustomOPDSFeedGenerationScript(Script):
             if not work:
                 detail_list += (bullet + "%r : No Work found." % license_pool)
                 continue
-            detail_list += (bullet + "%r : Unknown error.")
+            detail_list += (bullet + "%r : Unknown error." % identifier)
         self.log.warn(
             "%i identifiers could not be added to the feed. %s",
             len(missing_ids), detail_list
