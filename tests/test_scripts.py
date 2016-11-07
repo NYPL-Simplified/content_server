@@ -9,15 +9,16 @@ from ..core.lane import (
     Pagination,
 )
 from ..core.model import (
+    CachedFeed,
     Edition,
     Identifier,
     LicensePool,
     Representation,
     Work,
 )
-from ..core.opds import AcquisitionFeed
 from ..core.s3 import DummyS3Uploader
 
+from ..lanes import IdentifiersLane
 from ..opds import StaticFeedAnnotator
 from ..scripts import CustomOPDSFeedGenerationScript
 
@@ -67,6 +68,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         # There should also be a Representation saved to the database
         # for each feed.
         representations = self._db.query(Representation).all()
+
         # Representations with "Dummy content" are created in _license_pool()
         # for each working. We'll ignore these.
         representations = [r for r in representations if r.content != 'Dummy content']
@@ -77,18 +79,22 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
         zeta = self._work(title='Zeta', authors='Phi', with_open_access_download=True)
 
-        qu = self._db.query(Work).join(Work.presentation_edition)
+        identifiers = list()
+        for work in [omega, alpha, zeta]:
+            identifier = work.license_pools[0].identifier
+            identifiers.append(identifier)
+        lane = IdentifiersLane(self._db, identifiers, "Testing")
+
         script = CustomOPDSFeedGenerationScript(_db=self._db)
         result = script.create_feeds(
-            qu, 'Test Feed', 'https://mta.librarysimplified.org',
-            Pagination.default()
+            lane, 'Test Feed', 'https://mta.librarysimplified.org', 50
         )
 
         eq_(True, isinstance(result, dict))
         eq_(['test-feed', 'test-feed_author'], sorted(result.keys()))
         for key, [feed] in result.items():
-            eq_(True, isinstance(feed, AcquisitionFeed))
-            parsed = feedparser.parse(unicode(feed))
+            eq_(True, isinstance(feed, CachedFeed))
+            parsed = feedparser.parse(feed.content)
             [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
             if key == 'test-feed':
                 # The entries are sorted by title, by default.
@@ -106,22 +112,25 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         w1 = self._work(with_open_access_download=True)
         w2 = self._work(with_open_access_download=True)
 
+        identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
+
         pagination = Pagination(size=1)
-        query = self._db.query(Work).order_by(Work.id)
+        lane = IdentifiersLane(self._db, identifiers, "Testing Pages")
         facet = Facets('main', 'always', 'title')
         annotator = StaticFeedAnnotator('https://ls.org', 'test-feed')
 
         script = CustomOPDSFeedGenerationScript(_db=self._db)
         result = list(script.create_feed_pages(
-            query, pagination, 'https://ls.org', 'test-feed', annotator,
+            lane, pagination, 'test-feed', 'https://ls.org', annotator,
             facet
         ))
+
         # Two feeds are returned with the proper links.
         [first, second] = result
         def links_by_rel(parsed_feed, rel):
             return [l for l in parsed_feed.feed.links if l['rel']==rel]
 
-        parsed = feedparser.parse(unicode(first))
+        parsed = feedparser.parse(first.content)
         [entry] = parsed.entries
         eq_(w1.title, entry.title)
         eq_(w1.author, entry.simplified_sort_name)
@@ -131,7 +140,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         eq_([], links_by_rel(parsed, 'previous'))
         eq_([], links_by_rel(parsed, 'first'))
 
-        parsed = feedparser.parse(unicode(second))
+        parsed = feedparser.parse(second.content)
         [entry] = parsed.entries
         eq_(w2.title, entry.title)
         eq_(w2.author, entry.simplified_sort_name)
