@@ -35,7 +35,6 @@ from core.model import (
 )
 from core.monitor import PresentationReadyMonitor
 from core.opds import AcquisitionFeed
-from core.util.opds_writer import OPDSFeed
 from core.s3 import S3Uploader
 from core.external_search import ExternalSearchIndex
 from core.util import fast_query_count
