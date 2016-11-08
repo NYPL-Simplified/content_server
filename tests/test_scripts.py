@@ -24,6 +24,11 @@ from ..scripts import CustomOPDSFeedGenerationScript
 
 class TestCustomOPDSFeedGenerationScript(DatabaseTest):
 
+    def setup(self):
+        super(TestCustomOPDSFeedGenerationScript, self).setup()
+        self.uploader = DummyS3Uploader()
+        self.script = CustomOPDSFeedGenerationScript(_db=self._db)
+
     def test_slugify_feed_title(self):
         script = CustomOPDSFeedGenerationScript
         eq_('hey-im-a-feed', script.slugify_feed_title("Hey! I'm a feed!!"))
@@ -43,15 +48,13 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         urn1 = requested.license_pools[0].identifier.urn
         urn2 = suppressed.license_pools[0].identifier.urn
 
-        script = CustomOPDSFeedGenerationScript(_db=self._db)
-        uploader = DummyS3Uploader()
         cmd_args = ['-t', 'Test Feed', '-d', 'mta.librarysimplified.org',
                     '-u', no_pool, urn1, urn2]
-        script.run(uploader=uploader, cmd_args=cmd_args)
+        self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
         # Feeds are created and uploaded for the main feed and its facets.
-        eq_(2, len(uploader.content))
-        for feed in uploader.content:
+        eq_(2, len(self.uploader.content))
+        for feed in self.uploader.content:
             parsed = feedparser.parse(feed)
             eq_(u'mta.librarysimplified.org', parsed.feed.id)
             eq_(u'Test Feed', parsed.feed.title)
@@ -81,21 +84,18 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         w2 = self._work(with_open_access_download=True)
         urns = [work.license_pools[0].identifier.urn for work in [w1, w2]]
 
-        uploader = DummyS3Uploader()
-        script = CustomOPDSFeedGenerationScript(_db=self._db)
         cmd_args = ['-t', 'Test Feed', '-d', 'http://ls.org',
                     '--page-size', '1', '-u', urns[0], urns[1]]
+        self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
-        script.run(uploader=uploader, cmd_args=cmd_args)
-
-        eq_(4, len(uploader.uploaded))
+        eq_(4, len(self.uploader.uploaded))
 
         expected_filenames = [
             'test-feed.opds', 'test-feed_2.opds', 'test-feed_author.opds',
             'test-feed_author_2.opds'
         ]
-        expected = [uploader.content_root()+f for f in expected_filenames]
-        result = [rep.mirror_url for rep in uploader.uploaded]
+        expected = [self.uploader.content_root()+f for f in expected_filenames]
+        result = [rep.mirror_url for rep in self.uploader.uploaded]
         eq_(sorted(expected), sorted(result))
 
     def test_create_feeds(self):
@@ -109,8 +109,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
             identifiers.append(identifier)
         lane = IdentifiersLane(self._db, identifiers, "Testing")
 
-        script = CustomOPDSFeedGenerationScript(_db=self._db)
-        result = script.create_feeds(
+        result = self.script.create_feeds(
             lane, 'Test Feed', 'https://mta.librarysimplified.org', 50
         )
 
@@ -143,8 +142,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         facet = Facets('main', 'always', 'title')
         annotator = StaticFeedAnnotator('https://ls.org', 'test-feed')
 
-        script = CustomOPDSFeedGenerationScript(_db=self._db)
-        result = list(script.create_feed_pages(
+        result = list(self.script.create_feed_pages(
             lane, pagination, 'test-feed', 'https://ls.org', annotator,
             facet
         ))
