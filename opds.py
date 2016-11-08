@@ -102,8 +102,9 @@ class StaticFeedAnnotator(ContentServerAnnotator):
 
     """An Annotator to work with static feeds generated via script"""
 
-    def __init__(self, base_url, base_filename, default_order=None):
+    def __init__(self, base_url, base_filename, default_order=None, search_link=None):
         self.default_order = default_order
+        self.search_link = search_link
         self.base_url = base_url
 
         if base_filename.endswith('.opds'):
@@ -138,3 +139,12 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             filename += ('_%i' % page_number)
 
         return self.base_url + '/' + filename + '.opds'
+
+    def annotate_feed(self, feed, lane):
+        if self.search_link:
+            OPDSFeed.add_link_to_feed(
+                feed.feed,
+                rel="search",
+                href=self.search_link,
+                type="application/opensearchdescription+xml")
+                

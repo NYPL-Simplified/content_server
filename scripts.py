@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from nose.tools import set_trace
 from sqlalchemy.orm import lazyload
+from lxml import etree
 
 from core.classifier import Classifier
 from core.scripts import Script
@@ -35,13 +36,14 @@ from core.model import (
 from core.monitor import PresentationReadyMonitor
 from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
+from core.external_search import ExternalSearchIndex
 from core.util import fast_query_count
 
 from coverage import GutenbergEPUBCoverageProvider
 from lanes import IdentifiersLane
 from marc import MARCExtractor
 from monitor import GutenbergMonitor
-from opds import StaticFeedAnnotator
+from opds import StaticFeedAnnotator, ContentServerAnnotator
 
 
 class GutenbergMonitorScript(Script):
@@ -334,8 +336,14 @@ class CustomOPDSFeedGenerationScript(Script):
             help='Upload OPDS feed via S3.'
         )
         parser.add_argument(
-            '--page_size', type=int,
+            '--page-size', type=int,
             help='The number of entries in each page feed (default = 50)'
+        )
+        parser.add_argument(
+            '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
+        )
+        parser.add_argument(
+            '--search-index', help='Upload to this elasticsearch index. elasticsearch-url must also be included'
         )
         parser.add_argument(
             'urns', help='A specific identifier urn to process.',
@@ -361,6 +369,9 @@ class CustomOPDSFeedGenerationScript(Script):
             # Works without this information.
             raise ValueError('Please include all required arguments.')
 
+        if (parsed.search_index and not parsed.search_url) or (parsed.search_url and not parsed.search_index):
+            raise ValueError("Both --search-url and --search-index arguments must be included to upload to a search index")
+
         identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                        for urn in parsed.urns]
 
@@ -370,14 +381,19 @@ class CustomOPDSFeedGenerationScript(Script):
             identifier_ids = [i.id for i in identifiers]
             self.log_missing_identifiers(identifier_ids, lane.works())
 
+        search_link = None
+        if parsed.search_url and parsed.search_index:
+            search_link = feed_id + "/search"
+
         # Create feeds for all enabled facets.
-        feeds = self.create_feeds(lane, feed_title, feed_id, page_size)
+        feeds = self.create_feeds(lane, feed_title, feed_id, page_size, search_link)
 
         for base_filename, feed_pages in feeds.items():
             for index, page in enumerate(feed_pages):
                 filename = base_filename
                 if index != 0:
                     filename += '_%i' % (index+1)
+
                 if parsed.upload:
                     feed_representation = Representation()
                     feed_representation.set_fetched_content(
@@ -395,6 +411,30 @@ class CustomOPDSFeedGenerationScript(Script):
                     with open(filename, 'w') as f:
                         f.write(page.content)
                     self.log.info("OPDS feed saved locally at %s", filename)
+
+        if parsed.search_url and parsed.search_index:
+            search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
+            annotator = ContentServerAnnotator()
+
+            search_documents = []
+
+            # It's slow to do these individually, but this won't run very often.
+            for work in lane.works().all():
+                doc = work.to_search_document()
+                doc["_index"] = search_client.works_index
+                doc["_type"] = search_client.work_document_type
+                doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
+                search_documents.append(doc)
+
+            success_count, errors = search_client.bulk(
+                search_documents,
+                raise_on_error=False,
+                raise_on_exception=False,
+            )
+
+            if (len(errors) > 0):
+                self.log.error("%i errors uploading to search index" % len(errors))
+            self.log.info("%i documents uploaded to search index %s on %s" % (success_count, parsed.search_index, parsed.search_url))
 
     def log_missing_identifiers(self, requested_ids, works_qu):
         """Logs details about requested identifiers that could not be added
@@ -429,7 +469,7 @@ class CustomOPDSFeedGenerationScript(Script):
             len(missing_ids), detail_list
         )
 
-    def create_feeds(self, lane, feed_title, feed_id, page_size):
+    def create_feeds(self, lane, feed_title, feed_id, page_size, search_link=None):
         """Creates feeds for facets that may be required
 
         :return: A dictionary of filenames pointing to a list of CachedFeed
@@ -437,7 +477,7 @@ class CustomOPDSFeedGenerationScript(Script):
         """
         base_filename = self.slugify_feed_title(feed_title)
         annotator = StaticFeedAnnotator(
-            feed_id, base_filename, default_order=self.DEFAULT_ORDER
+            feed_id, base_filename, default_order=self.DEFAULT_ORDER, search_link=search_link
         )
         static_facets = Facets(
             Facets.COLLECTION_FULL, Facets.AVAILABLE_OPEN_ACCESS,
