@@ -110,12 +110,31 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             base_filename = base_filename[:-5]
         self.base_filename = base_filename
 
-    def facet_url(self, facets):
+    def default_lane_url(self):
+        return self.base_url + '/' + self.base_filename + '.opds'
+
+    def filename_facet_segment(self, facets):
         ordered_by = list(facets.items())[0][1]
-
-        filename = self.base_filename
         if ordered_by != self.default_order:
-            filename += ('_'+ordered_by)
-        filename += '.opds'
+            return '_' + ordered_by
+        return ''
 
-        return self.base_url + '/' + filename
+    def facet_url(self, facets):
+        """Incoporate order facets into filenames for static feeds
+        """
+        filename = self.base_filename
+        filename += self.filename_facet_segment(facets)
+
+        return self.base_url + '/' + filename + '.opds'
+
+    def feed_url(self, lane, facets, pagination):
+        """Incorporate pages into filenames for static feeds
+        """
+        filename = self.base_filename
+        filename += self.filename_facet_segment(facets)
+
+        page_number = (pagination.offset / pagination.size) + 1
+        if page_number > 1:
+            filename += ('_%i' % page_number)
+
+        return self.base_url + '/' + filename + '.opds'

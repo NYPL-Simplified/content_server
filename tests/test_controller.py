@@ -79,18 +79,21 @@ class TestFeedController(ControllerTest):
             assert self.english_2.title in response.data
             assert self.french_1.author in response.data
 
+    def test_verify_default_feed_facets(self):
+        with self.app.test_request_context('/?size=2'):
+            response = self.content_server.opds_feeds.feed()
             feed = feedparser.parse(response.data)
-            links = feed['feed']['links']
 
-            # Verify the default facets.
+            links = feed.feed.links
             next_link = [x for x in links if x['rel'] == 'next'][0]['href']
+
             assert 'order=added' in next_link
             assert 'collection=full' in next_link
             assert 'available=always' in next_link
 
     def test_lane_feed(self):
-        with self.app.test_request_context("/"):
-            # This request finds all the test books, since they're
+        with self.app.test_request_context("/?size=2"):
+            # This request finds two of the three test books, since they're
             # all in Gutenberg.
             license_source = DataSource.lookup(self._db, DataSource.GUTENBERG)
             response = self.content_server.opds_feeds.feed(
@@ -98,7 +101,7 @@ class TestFeedController(ControllerTest):
             )
             feed = feedparser.parse(response.data)
             entries = feed['entries']
-            eq_(3, len(entries))
+            eq_(2, len(entries))
 
             [next_url] = [x['href'] for x in feed['feed']['links']
                           if x['rel'] == 'next']
@@ -121,7 +124,16 @@ class TestFeedController(ControllerTest):
             )
             assert next_url.startswith(expect)
 
-            # This request finds zero books.
+        with self.app.test_request_context('/?after=2&size=2'):
+            # Getting the next page finds the remaining book.
+            response = self.content_server.opds_feeds.feed(
+                license_source_name=DataSource.GUTENBERG
+            )
+            feed = feedparser.parse(response.data)
+            eq_(1, len(feed.entries))
+
+        with self.app.test_request_context('/'):
+            # This request for Overdrive finds zero books.
             response = self.content_server.opds_feeds.feed(
                 license_source_name=DataSource.OVERDRIVE
             )
