@@ -420,12 +420,11 @@ class CustomOPDSFeedGenerationScript(Script):
 
             # It's slow to do these individually, but this won't run very often.
             for work in lane.works().all():
-                if work:
-                    doc = work.to_search_document()
-                    doc["_index"] = search_client.works_index
-                    doc["_type"] = search_client.work_document_type
-                    doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
-                    search_documents.append(doc)
+                doc = work.to_search_document()
+                doc["_index"] = search_client.works_index
+                doc["_type"] = search_client.work_document_type
+                doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
+                search_documents.append(doc)
 
             success_count, errors = search_client.bulk(
                 search_documents,
