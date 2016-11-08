@@ -9,7 +9,10 @@ from lxml import etree
 
 from core.classifier import Classifier
 from core.scripts import Script
-from core.lane import Facets
+from core.lane import (
+    Facets,
+    Pagination,
+)
 from core.metadata_layer import (
     LinkData,
     FormatData,
@@ -38,9 +41,10 @@ from core.external_search import ExternalSearchIndex
 from core.util import fast_query_count
 
 from coverage import GutenbergEPUBCoverageProvider
+from lanes import IdentifiersLane
 from marc import MARCExtractor
 from monitor import GutenbergMonitor
-from opds import StaticFeedAnnotator
+from opds import StaticFeedAnnotator, ContentServerAnnotator
 
 
 class GutenbergMonitorScript(Script):
@@ -313,9 +317,13 @@ class CustomOPDSFeedGenerationScript(Script):
             Facets.AVAILABLE_OPEN_ACCESS
         ],
         Facets.COLLECTION_FACET_GROUP_NAME : [
-            Facets.COLLECTION_MAIN
+            Facets.COLLECTION_FULL
         ]
     }
+
+    # Static feeds are refreshed each time they're created, so this
+    # type is primarily just to distinguish them in the database.
+    CACHE_TYPE = 'static'
 
     @classmethod
     def arg_parser(cls):
@@ -327,6 +335,10 @@ class CustomOPDSFeedGenerationScript(Script):
         parser.add_argument(
             '-u', '--upload', action='store_true',
             help='Upload OPDS feed via S3.'
+        )
+        parser.add_argument(
+            '--page-size', type=int,
+            help='The number of entries in each page feed (default = 50)'
         )
         parser.add_argument(
             '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
@@ -351,6 +363,7 @@ class CustomOPDSFeedGenerationScript(Script):
         parsed = self.arg_parser().parse_args(cmd_args)
         feed_title = unicode(parsed.title)
         feed_id = unicode(parsed.domain)
+        page_size = parsed.page_size or Pagination.DEFAULT_SIZE
 
         if not (feed_title and feed_id and parsed.urns):
             # We can't build an OPDS feed or identify the required
@@ -362,49 +375,43 @@ class CustomOPDSFeedGenerationScript(Script):
 
         identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                        for urn in parsed.urns]
-        identifier_ids = [identifier.id for identifier in identifiers]
 
-        # TODO: Find missing Identifiers in a different way and stop
-        # querying for them alongside Works.
-        works_identifiers_qu = self._db.query(Work, Identifier).\
-                select_from(LicensePool).join(LicensePool.work).\
-                join(LicensePool.identifier).join(Work.presentation_edition).\
-                filter(Identifier.id.in_(identifier_ids)).\
-                filter(LicensePool.suppressed != True).\
-                enable_eagerloads(False)
+        lane = IdentifiersLane(self._db, identifiers, feed_title)
 
-        if fast_query_count(works_identifiers_qu) != len(identifiers):
-            self.log_missing_identifiers(identifiers, works_identifiers_qu)
+        if fast_query_count(lane.works()) != len(identifiers):
+            identifier_ids = [i.id for i in identifiers]
+            self.log_missing_identifiers(identifier_ids, lane.works())
+
+        search_link = None
+        if parsed.search_url and parsed.search_index:
+            search_link = feed_id + "/search"
 
         # Create feeds for all enabled facets.
-        feeds = self.create_faceted_feeds(
-            works_identifiers_qu, feed_title, feed_id
-        )
+        feeds = self.create_feeds(lane, feed_title, feed_id, page_size, search_link)
 
-        for filename, feed in feeds.items():
-            if parsed.search_url and parsed.search_index:
-                OPDSFeed.add_link_to_feed(feed=feed.feed,
-                                          rel="search",
-                                          href=feed_id + "/search",
-                                          type="application/opensearchdescription+xml")
+        for base_filename, feed_pages in feeds.items():
+            for index, page in enumerate(feed_pages):
+                filename = base_filename
+                if index != 0:
+                    filename += '_%i' % (index+1)
 
-            if parsed.upload:
-                feed_representation = Representation()
-                feed_representation.set_fetched_content(
-                    unicode(feed), content_path=filename
-                )
+                if parsed.upload:
+                    feed_representation = Representation()
+                    feed_representation.set_fetched_content(
+                        page.content, content_path=filename
+                    )
 
-                uploader = uploader or S3Uploader()
-                feed_representation.mirror_url = uploader.feed_url(filename)
+                    uploader = uploader or S3Uploader()
+                    feed_representation.mirror_url = uploader.feed_url(filename)
 
-                self._db.add(feed_representation)
-                self._db.commit()
-                uploader.mirror_one(feed_representation)
-            else:
-                filename = os.path.abspath(filename + '.opds')
-                with open(filename, 'w') as f:
-                    f.write(unicode(feed))
-                self.log.info("OPDS feed saved locally at %s", filename)
+                    self._db.add(feed_representation)
+                    self._db.commit()
+                    uploader.mirror_one(feed_representation)
+                else:
+                    filename = os.path.abspath(filename + '.opds')
+                    with open(filename, 'w') as f:
+                        f.write(page.content)
+                    self.log.info("OPDS feed saved locally at %s", filename)
 
         if parsed.search_url and parsed.search_index:
             search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
@@ -413,12 +420,13 @@ class CustomOPDSFeedGenerationScript(Script):
             search_documents = []
 
             # It's slow to do these individually, but this won't run very often.
-            for work in works:
-                doc = work.to_search_document()
-                doc["_index"] = search_client.works_index
-                doc["_type"] = search_client.work_document_type
-                doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
-                search_documents.append(doc)
+            for work in lane.works().all():
+                if work:
+                    doc = work.to_search_document()
+                    doc["_index"] = search_client.works_index
+                    doc["_type"] = search_client.work_document_type
+                    doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
+                    search_documents.append(doc)
 
             success_count, errors = search_client.bulk(
                 search_documents,
@@ -430,19 +438,22 @@ class CustomOPDSFeedGenerationScript(Script):
                 self.log.error("%i errors uploading to search index" % len(errors))
             self.log.info("%i documents uploaded to search index %s on %s" % (success_count, parsed.search_index, parsed.search_url))
 
-
-    def log_missing_identifiers(self, requested_identifiers, included_qu):
+    def log_missing_identifiers(self, requested_ids, works_qu):
         """Logs details about requested identifiers that could not be added
         to the static feeds for whatever reason.
         """
-        included_identifiers = set([i[1] for i in included_qu])
-        missing = set(requested_identifiers).difference(included_identifiers)
-        if not missing:
+        included_ids_qu = works_qu.statement.with_only_columns([Identifier.id])
+        included_ids = self._db.execute(included_ids_qu)
+        included_ids = [i[0] for i in included_ids.fetchall()]
+
+        missing_ids = set(requested_ids).difference(included_ids)
+        if not missing_ids:
             return
 
         detail_list = ""
         bullet = "\n    - "
-        for identifier in missing:
+        for id in missing_ids:
+            identifier = self._db.query(Identifier).filter(Identifier.id==id).one()
             license_pool = identifier.licensed_through
             if not license_pool:
                 detail_list += (bullet + "%r : No LicensePool found." % identifier)
@@ -454,45 +465,60 @@ class CustomOPDSFeedGenerationScript(Script):
             if not work:
                 detail_list += (bullet + "%r : No Work found." % license_pool)
                 continue
+            detail_list += (bullet + "%r : Unknown error." % identifier)
         self.log.warn(
             "%i identifiers could not be added to the feed. %s",
-            len(missing), detail_list
+            len(missing_ids), detail_list
         )
 
-    def create_faceted_feeds(self, works_query, feed_title, feed_id):
+    def create_feeds(self, lane, feed_title, feed_id, page_size, search_link=None):
         """Creates feeds for facets that may be required
 
-        :return: A dictionary of filenames pointing to feed objects
+        :return: A dictionary of filenames pointing to a list of CachedFeed
+        objects representing pages
         """
+        base_filename = self.slugify_feed_title(feed_title)
+        annotator = StaticFeedAnnotator(
+            feed_id, base_filename, default_order=self.DEFAULT_ORDER, search_link=search_link
+        )
         static_facets = Facets(
             Facets.COLLECTION_FULL, Facets.AVAILABLE_OPEN_ACCESS,
             Facets.ORDER_TITLE, enabled_facets=self.DEFAULT_ENABLED_FACETS
         )
-        static_facet_groups = list(static_facets.facet_groups)
-
-        base_filename = self.slugify_feed_title(feed_title)
-        annotator = StaticFeedAnnotator(
-            feed_id, base_filename, default_order=self.DEFAULT_ORDER
-        )
 
         feeds = dict()
-        for facet_group in static_facet_groups:
+        for facet_group in list(static_facets.facet_groups):
             ordered_by, facet_obj = facet_group[1:3]
 
-            faceted_query = facet_obj.apply(self._db, works_query)
-
-            works = [result[0] for result in faceted_query]
-            feed = AcquisitionFeed(
-                self._db, feed_title, feed_id, works, annotator=annotator
-            )
-
-            # Add the facet links to the feed.
-            for link_args in AcquisitionFeed.facet_links(annotator, facet_obj):
-                AcquisitionFeed.add_link_to_feed(feed=feed.feed, **link_args)
+            pagination = Pagination(size=page_size)
+            feed_pages = list(self.create_feed_pages(
+                lane, pagination, feed_title, feed_id, annotator, facet_obj
+            ))
 
             key = base_filename
             if ordered_by != self.DEFAULT_ORDER:
                 key += ('_' + ordered_by)
-            feeds[key] = feed
+            feeds[key] = feed_pages
+
         return feeds
 
+    def create_feed_pages(self, lane, pagination, feed_title, feed_id,
+                          annotator, facet):
+        """Yields each page of the feed for a particular lane."""
+
+        previous_page = pagination.previous_page
+        while not previous_page or previous_page.has_next_page:
+            page = AcquisitionFeed.page(
+                self._db, feed_title, feed_id, lane,
+                annotator=annotator,
+                facets=facet,
+                pagination=pagination,
+                cache_type=self.CACHE_TYPE,
+                force_refresh=True,
+                use_materialized_works=False
+            )
+            yield page
+
+            # Reset values to determine if next page should be created.
+            previous_page = pagination
+            pagination = pagination.next_page
