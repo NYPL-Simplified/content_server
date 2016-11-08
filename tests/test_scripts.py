@@ -84,7 +84,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         uploader = DummyS3Uploader()
         script = CustomOPDSFeedGenerationScript(_db=self._db)
         cmd_args = ['-t', 'Test Feed', '-d', 'http://ls.org',
-                    '--page_size', '1', '-u', urns[0], urns[1]]
+                    '--page-size', '1', '-u', urns[0], urns[1]]
 
         script.run(uploader=uploader, cmd_args=cmd_args)
 
