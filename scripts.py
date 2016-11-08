@@ -314,7 +314,7 @@ class CustomOPDSFeedGenerationScript(Script):
             Facets.AVAILABLE_OPEN_ACCESS
         ],
         Facets.COLLECTION_FACET_GROUP_NAME : [
-            Facets.COLLECTION_MAIN
+            Facets.COLLECTION_FULL
         ]
     }
 
@@ -440,7 +440,7 @@ class CustomOPDSFeedGenerationScript(Script):
             feed_id, base_filename, default_order=self.DEFAULT_ORDER
         )
         static_facets = Facets(
-            Facets.COLLECTION_MAIN, Facets.AVAILABLE_OPEN_ACCESS,
+            Facets.COLLECTION_FULL, Facets.AVAILABLE_OPEN_ACCESS,
             Facets.ORDER_TITLE, enabled_facets=self.DEFAULT_ENABLED_FACETS
         )
 
