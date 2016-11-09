@@ -1,8 +1,9 @@
+import logging
+import re
 from collections import defaultdict
 from nose.tools import set_trace
 from flask import url_for
 from sqlalchemy.orm import lazyload
-import logging
 
 from core.app_server import cdn_url_for
 from core.opds import (
@@ -102,14 +103,21 @@ class StaticFeedAnnotator(ContentServerAnnotator):
 
     """An Annotator to work with static feeds generated via script"""
 
-    def __init__(self, base_url, base_filename, default_order=None, search_link=None):
+    @classmethod
+    def slugify_feed_title(cls, feed_title):
+        slug = re.sub('[.!@#\'$,]', '', feed_title.lower())
+        slug = re.sub('&', ' and ', slug)
+        slug = re.sub(' {2,}', ' ', slug)
+        return unicode('-'.join(slug.split(' ')))
+
+    def __init__(self, base_url, feed_title, default_order=None, search_link=None):
         self.default_order = default_order
         self.search_link = search_link
         self.base_url = base_url
 
-        if base_filename.endswith('.opds'):
-            base_filename = base_filename[:-5]
-        self.base_filename = base_filename
+        if feed_title.endswith('.opds'):
+            feed_title = feed_title[:-5]
+        self.base_filename = self.slugify_feed_title(feed_title)
 
     def default_lane_url(self):
         return self.base_url + '/' + self.base_filename + '.opds'
@@ -121,16 +129,16 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         return ''
 
     def facet_url(self, facets):
-        """Incoporate order facets into filenames for static feeds
-        """
+        """Incoporate order facets into filenames for static feeds"""
+
         filename = self.base_filename
         filename += self.filename_facet_segment(facets)
 
         return self.base_url + '/' + filename + '.opds'
 
     def feed_url(self, lane, facets, pagination):
-        """Incorporate pages into filenames for static feeds
-        """
+        """Incorporate pages into filenames for static feeds"""
+
         filename = self.base_filename
         filename += self.filename_facet_segment(facets)
 
@@ -139,6 +147,17 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             filename += ('_%i' % page_number)
 
         return self.base_url + '/' + filename + '.opds'
+
+    def groups_url(self, lane):
+        path = list()
+        while lane.parent:
+            parent_name = lane.parent.name
+            path_segment = self.slugify_feed_title(parent_name)
+            path.insert(0, segment)
+            lane = lane.parent
+
+        path = '_'.join(path)
+        return self.base_url + '/' + '_'.join(path) + '.opds'
 
     def annotate_feed(self, feed, lane):
         if self.search_link:

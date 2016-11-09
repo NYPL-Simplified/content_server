@@ -359,13 +359,6 @@ class CustomOPDSFeedGenerationScript(Script):
         )
         return parser
 
-    @classmethod
-    def slugify_feed_title(cls, feed_title):
-        slug = re.sub('[.!@#\'$,]', '', feed_title.lower())
-        slug = re.sub('&', ' and ', slug)
-        slug = re.sub(' {2,}', ' ', slug)
-        return unicode('-'.join(slug.split(' ')))
-
     def run(self, uploader=None, cmd_args=None):
         parsed = self.arg_parser().parse_args(cmd_args)
         source_csv = os.path.abspath(parsed.source_csv)
@@ -578,9 +571,8 @@ class CustomOPDSFeedGenerationScript(Script):
         :return: A dictionary of filenames pointing to a list of CachedFeed
         objects representing pages
         """
-        base_filename = self.slugify_feed_title(feed_title)
         annotator = StaticFeedAnnotator(
-            feed_id, base_filename, default_order=self.DEFAULT_ORDER, search_link=search_link
+            feed_id, feed_title, default_order=self.DEFAULT_ORDER, search_link=search_link
         )
         static_facets = Facets(
             Facets.COLLECTION_FULL, Facets.AVAILABLE_OPEN_ACCESS,
@@ -596,7 +588,7 @@ class CustomOPDSFeedGenerationScript(Script):
                 lane, pagination, feed_title, feed_id, annotator, facet_obj
             ))
 
-            key = base_filename
+            key = annotator.base_filename
             if ordered_by != self.DEFAULT_ORDER:
                 key += ('_' + ordered_by)
             feeds[key] = feed_pages
