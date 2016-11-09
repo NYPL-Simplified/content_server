@@ -59,12 +59,12 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         )
         [(key, value)] = metadata.items()
         eq_(u'http://www.feedbooks.com/book/677', key)
-        eq_("Discourse on the method", value.title)
+        eq_("Discourse on the Method", value.title)
 
         # Instead of the short description from feed.atom, we have the
         # long description from 677.atom.
         [description] = [x for x in value.links if x.rel==Hyperlink.DESCRIPTION]
-        eq_(1818, len(description.content)
+        eq_(1818, len(description.content))
         
     def test_improve_description(self):
         # Here's a Metadata that has a bad (truncated) description.
