@@ -4,6 +4,7 @@ from nose.tools import set_trace
 from core.opds import OPDSFeed
 from core.opds_import import OPDSImporter
 from core.model import (
+    DataSource,
     Hyperlink,
     Resource,
     Representation,
@@ -12,8 +13,14 @@ from core.model import (
 
 class FeedbooksOPDSImporter(OPDSImporter):
 
+    DATA_SOURCE_NAME = "FeedBooks"
     THIRTY_DAYS = datetime.timedelta(days=30)
 
+    def __init__(self, _db, *args, **kwargs):
+        super(FeedbooksOPDSImporter, self).__init__(
+            _db, self.DATA_SOURCE_NAME, *args, **kwargs
+        )
+    
     def extract_feed_data(self, feed, feed_url=None):
         metadata, failures = super(FeedbooksOPDSImporter, self).extract_feed_data(
             feed, feed_url
@@ -65,10 +72,15 @@ class FeedbooksOPDSImporter(OPDSImporter):
             # processing them until we get a good description.
 
             # Fetch the alternate entry.
+            print alternate_link.href
             representation, is_new = Representation.get(
-                self._db, alternate_link.href, max_age=self.THIRTY_DAYS
+                self._db, alternate_link.href, max_age=self.THIRTY_DAYS,
+                do_get=self.http_get
             )
 
+            if representation.status_code != 200:
+                continue
+            
             # Parse the alternate entry with feedparser and run it through
             # data_detail_for_feedparser_entry().
             parsed = feedparser.parse(representation.content)
@@ -76,14 +88,22 @@ class FeedbooksOPDSImporter(OPDSImporter):
                 # This is supposed to be a single entry, and it's not.
                 continue
             [entry] = parsed['entries']
-            detail_id, new_detail, failure = self.data_detail_for_feedparser_entry(
-                entry, None
+            data_source = DataSource.lookup(
+                self._db, self.data_source_name, autocreate=True
             )
-
+            detail_id, new_detail, failure = self.data_detail_for_feedparser_entry(
+                entry, data_source
+            )
+            if failure:
+                # There was a problem parsing the entry.
+                self.log.error(failure.exception)
+                continue
+            
             # TODO: Ideally we could verify that detail_id == id, but
             # right now they are always different -- one is an HTTPS
             # URI and one is an HTTP URI. So we omit this step and
-            # assume the 'alternate' links are correct.
+            # assume the documents at both ends of the 'alternate'
+            # link identify the same resource.
 
             # Find any descriptions present in the alternate view which
             # are not present in the original.
@@ -98,6 +118,8 @@ class FeedbooksOPDSImporter(OPDSImporter):
                 metadata.links = (
                     everything_except_descriptions + new_descriptions
                 )
+                break
+
         return metadata
 
 
@@ -162,6 +184,8 @@ class RehostingPolicy(object):
 
     @classmethod
     def rights_uri(cls, rights, source, publication_year):
+        if isinstance(publication_year, basestring):
+            publication_year = int(publication_year)
         if not cls.can_rehost_us(rights, source, publication_year):
             # We believe this book is still under copyright in the US
             # and we should not rehost it.
