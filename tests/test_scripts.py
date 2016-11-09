@@ -1,11 +1,16 @@
 import feedparser
-from nose.tools import set_trace, eq_
+from nose.tools import (
+    assert_raises,
+    eq_,
+    set_trace,
+)
 from os import path
 
 from . import DatabaseTest
 
 from ..core.lane import (
     Facets,
+    Lane,
     Pagination,
 )
 from ..core.model import (
@@ -97,6 +102,60 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         expected = [self.uploader.content_root()+f for f in expected_filenames]
         result = [rep.mirror_url for rep in self.uploader.uploaded]
         eq_(sorted(expected), sorted(result))
+
+    def test_make_lanes_from_csv(self):
+        csv_filename = 'tests/files/scripts/sample.csv'
+        top_level = self.script.make_lanes_from_csv(csv_filename)
+
+        def sublane_names(parent):
+            return sorted([s.name for s in parent.sublanes])
+
+        def sublane_by_name(parent, name):
+            """Confirms that there is only one lane with the given name
+            the sublanes of the parent
+
+            :return: sublane
+            """
+            [lane] = filter(lambda s: s.name==name, parent.sublanes)
+            return lane
+
+        expected = sorted(['Fiction', 'Short Stories', 'Nonfiction'])
+        eq_(expected, sublane_names(top_level))
+
+        # Nonfiction has no subcategories, so it is an IdentifiersLane
+        # with works.
+        nonfiction = sublane_by_name(top_level, 'Nonfiction')
+        eq_(True, isinstance(nonfiction, IdentifiersLane))
+        eq_(1, len(nonfiction.identifiers))
+
+        # Short Stories are an intermediate Lane object, with an
+        # appropriate IdentifiersLane sublane.
+        shorts = sublane_by_name(top_level, 'Short Stories')
+        eq_(True, isinstance(shorts, Lane))
+        [general_fiction] = shorts.sublanes.lanes
+        eq_(True, isinstance(general_fiction, IdentifiersLane))
+        eq_('General Fiction', general_fiction.name)
+        eq_(1, len(general_fiction.identifiers))
+
+        # Fiction has 3 sublanes, as configured via CSV.
+        fiction = sublane_by_name(top_level, 'Fiction')
+        expected = sorted(['Horror', 'General Fiction', 'Science Fiction'])
+        eq_(expected, sublane_names(fiction))
+
+        for lane in fiction.sublanes:
+            # They all have identifiers.
+            eq_(True, isinstance(lane, IdentifiersLane))
+        # Even more than 1!
+        horror = sublane_by_name(fiction, 'Horror')
+        eq_(3, len(horror.identifiers))
+        # And despite the fact that 'Fiction > Horror > Paranormal' is a
+        # category included in the example CSV file, it's not included
+        # because it has no identifiers marked.
+        eq_(0, len(horror.sublanes))
+
+        # If it did have works marked, it would raise an error.
+        csv_filename = 'tests/files/scripts/error.csv'
+        assert_raises(ValueError, self.script.make_lanes_from_csv, csv_filename)
 
     def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)

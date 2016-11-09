@@ -14,7 +14,7 @@ class IdentifiersLane(QueryGeneratedLane):
         self.identifiers = identifiers
         full_name = display_name = lane_name
         super(IdentifiersLane, self).__init__(
-            _db, full_name, display_name=display_name
+            _db, full_name, display_name=display_name, parent=parent
         )
 
     def lane_query_hook(self, qu, work_model=Work):

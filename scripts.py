@@ -2,6 +2,7 @@ import argparse
 import csv
 import os
 import re
+from collections import defaultdict
 from datetime import datetime
 from nose.tools import set_trace
 from sqlalchemy.orm import lazyload
@@ -19,6 +20,7 @@ from core.metadata_layer import (
     CirculationData,
     ReplacementPolicy,
 )
+from core.lane import Lane
 from core.model import (
     DataSource,
     DeliveryMechanism,
@@ -324,6 +326,9 @@ class CustomOPDSFeedGenerationScript(Script):
     # type is primarily just to distinguish them in the database.
     CACHE_TYPE = 'static'
 
+    # Identifies csv headers that are not considered titles for lanes.
+    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub']
+
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
@@ -468,6 +473,100 @@ class CustomOPDSFeedGenerationScript(Script):
             "%i identifiers could not be added to the feed. %s",
             len(missing_ids), detail_list
         )
+
+    def make_lanes_from_csv(self, filename):
+        """Parses a CSV file and creates the appropriate lane structure
+
+        :return: a top-level Lane object, complete with sublanes
+        """
+        filename = os.path.abspath(filename)
+        lanes = defaultdict(list)
+
+        with open(filename) as f:
+            reader = csv.DictReader(f)
+
+            # Initialize all headers that identify a Lane.
+            lane_headers = filter(
+                lambda h: h.lower() not in self.NONLANE_HEADERS,
+                reader.fieldnames
+            )
+            [lanes[header] for header in lane_headers]
+
+            # Sort identifiers into their intended Lane
+            for row in reader:
+                identifier = Identifier.parse_urn(self._db, row.get('urn'))[0]
+                for header in lane_headers:
+                    if row.get(header):
+                        lanes[header].append(identifier)
+
+        # Create lanes and sublanes.
+        top_level_lane = self.empty_lane()
+        for lane_header, identifiers in lanes.items():
+            if not identifiers:
+                # This lane has no Works and can be ignored.
+                continue
+
+            lane_path = [name.strip() for name in lane_header.split('>')]
+            base_lane = IdentifiersLane(self._db, identifiers, lane_path[-1])
+            self._add_lane_to_lane_path(top_level_lane, base_lane, lane_path)
+
+        return top_level_lane
+
+    def _add_lane_to_lane_path(self, top_level_lane, base_lane, lane_path):
+        """Adds a lane with works to the proper place in a tiered lane
+        hierarchy
+        """
+        intermediate_lanes = lane_path[:-1]
+        target = top_level_lane
+        while intermediate_lanes:
+            # Find or create any empty intermediate lanes.
+            lane_name = intermediate_lanes.pop(0)
+
+            existing = filter(lambda s: s.name==lane_name, target.sublanes)
+            if existing:
+                target = existing[0]
+
+                # Make sure it doesn't have any Works in it, or creating
+                # the feed files will get dicey.
+                if isinstance(target, IdentifiersLane):
+                    flawed_lane_path = '>'.join(lane_path[:-1])
+                    raise ValueError(
+                        "'%s' is configured with both Works AND a sublane"
+                        "'%s'. This functionality is not yet supported." %
+                        (flawed_lane_path, base_lane.name)
+                    )
+            else:
+                # Create a new lane and set it as the target.
+                new_sublane = self.empty_lane(name=lane_name, parent=target)
+                target.sublanes.add(new_sublane)
+                target = new_sublane
+
+        # We've reached the end of the Lane path. If we like it then
+        # we better put some Works in it.
+        base_lane.parent = target
+        target.sublanes.add(base_lane)
+
+    def empty_lane(self, name=None, parent=None):
+        """Creates a Lane without Works, either for the top level or
+        somewhere along a Lane tree / path.
+        """
+        if not parent:
+            # Create a top level lane.
+            return Lane(
+                self._db, 'All Books',
+                display_name='All Books',
+                include_all=False,
+                searchable=True,
+                invisible=True
+            )
+        else:
+            # Create a visible intermediate lane.
+            return Lane(
+                self._db, name,
+                display_name=name,
+                parent=parent,
+                include_all=False,
+            )
 
     def create_feeds(self, lane, feed_title, feed_id, page_size, search_link=None):
         """Creates feeds for facets that may be required
