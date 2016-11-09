@@ -41,6 +41,16 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         eq_('money-honey', script.slugify_feed_title("Money $$$       Honey"))
 
     def test_run(self):
+        cmd_args = ['fake.csv', '-t', 'Test Feed', '-d',
+                    'mta.librarysimplified.org', '-u']
+
+        # An incorrect CSV document raises a ValueError when there are
+        # also no URNs present.
+        assert_raises(
+            ValueError, self.script.run, uploader=self.uploader,
+            cmd_args=cmd_args
+        )
+
         not_requested = self._work(with_open_access_download=True)
         requested = self._work(with_open_access_download=True)
 
@@ -53,8 +63,8 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         urn1 = requested.license_pools[0].identifier.urn
         urn2 = suppressed.license_pools[0].identifier.urn
 
-        cmd_args = ['-t', 'Test Feed', '-d', 'mta.librarysimplified.org',
-                    '-u', no_pool, urn1, urn2]
+        cmd_args = ['fake.csv', '-t', 'Test Feed', '-d', 'mta.librarysimplified.org',
+                    '-u', '--urns', no_pool, urn1, urn2]
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
         # Feeds are created and uploaded for the main feed and its facets.
@@ -89,8 +99,8 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         w2 = self._work(with_open_access_download=True)
         urns = [work.license_pools[0].identifier.urn for work in [w1, w2]]
 
-        cmd_args = ['-t', 'Test Feed', '-d', 'http://ls.org',
-                    '--page-size', '1', '-u', urns[0], urns[1]]
+        cmd_args = ['fake.csv', '-t', 'Test Feed', '-d', 'http://ls.org',
+                    '--page-size', '1', '-u', '--urns', urns[0], urns[1]]
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
         eq_(4, len(self.uploader.uploaded))

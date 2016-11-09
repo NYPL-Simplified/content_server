@@ -332,6 +332,9 @@ class CustomOPDSFeedGenerationScript(Script):
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
+        parser.add_argument(
+            'source_csv', help='A CSV file to import URNs and Lane categories'
+        )
         parser.add_argument('-t', '--title', help='The title of the feed.')
         parser.add_argument(
             '-d', '--domain', help='The domain where the feed will be placed.'
@@ -341,8 +344,8 @@ class CustomOPDSFeedGenerationScript(Script):
             help='Upload OPDS feed via S3.'
         )
         parser.add_argument(
-            '--page-size', type=int,
-            help='The number of entries in each page feed (default = 50)'
+            '--page-size', type=int, default=Pagination.DEFAULT_SIZE,
+            help='The number of entries in each page feed'
         )
         parser.add_argument(
             '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
@@ -351,8 +354,8 @@ class CustomOPDSFeedGenerationScript(Script):
             '--search-index', help='Upload to this elasticsearch index. elasticsearch-url must also be included'
         )
         parser.add_argument(
-            'urns', help='A specific identifier urn to process.',
-            metavar='URN', nargs='*'
+            '--urns', metavar='URN', nargs='*',
+            help='Specific identifier urns to process, esp. for testing'
         )
         return parser
 
@@ -365,11 +368,13 @@ class CustomOPDSFeedGenerationScript(Script):
 
     def run(self, uploader=None, cmd_args=None):
         parsed = self.arg_parser().parse_args(cmd_args)
+        source_csv = os.path.abspath(parsed.source_csv)
         feed_title = unicode(parsed.title)
         feed_id = unicode(parsed.domain)
-        page_size = parsed.page_size or Pagination.DEFAULT_SIZE
+        page_size = parsed.page_size
 
-        if not (feed_title and feed_id and parsed.urns):
+        if not (os.path.isfile(source_csv) or
+               (feed_title and feed_id and parsed.urns)):
             # We can't build an OPDS feed or identify the required
             # Works without this information.
             raise ValueError('Please include all required arguments.')
@@ -479,7 +484,6 @@ class CustomOPDSFeedGenerationScript(Script):
 
         :return: a top-level Lane object, complete with sublanes
         """
-        filename = os.path.abspath(filename)
         lanes = defaultdict(list)
 
         with open(filename) as f:
