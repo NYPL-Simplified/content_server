@@ -25,8 +25,8 @@ class FeedbooksOPDSImporter(OPDSImporter):
         metadata, failures = super(FeedbooksOPDSImporter, self).extract_feed_data(
             feed, feed_url
         )
-        for id, metadata in metadata.items():
-            self.improve_description(id, metadata)
+        for id, m in metadata.items():
+            self.improve_description(id, m)
         return metadata, failures
 
     def rights_for_entry(self, entry):
