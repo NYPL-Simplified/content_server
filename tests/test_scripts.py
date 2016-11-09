@@ -4,14 +4,22 @@ from os import path
 
 from . import DatabaseTest
 
+from ..core.lane import (
+    Facets,
+    Pagination,
+)
 from ..core.model import (
+    CachedFeed,
     Edition,
+    Identifier,
+    LicensePool,
     Representation,
     Work,
 )
-from ..core.opds import AcquisitionFeed
 from ..core.s3 import DummyS3Uploader
 
+from ..lanes import IdentifiersLane
+from ..opds import StaticFeedAnnotator
 from ..scripts import CustomOPDSFeedGenerationScript
 
 class TestCustomOPDSFeedGenerationScript(DatabaseTest):
@@ -60,27 +68,57 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         # There should also be a Representation saved to the database
         # for each feed.
         representations = self._db.query(Representation).all()
+
         # Representations with "Dummy content" are created in _license_pool()
         # for each working. We'll ignore these.
         representations = [r for r in representations if r.content != 'Dummy content']
         eq_(2, len(representations))
 
-    def test_create_faceted_feeds(self):
+    def test_run_multipage_filenames(self):
+        """Confirm files are uploaded to S3 as expected"""
+
+        w1 = self._work(with_open_access_download=True)
+        w2 = self._work(with_open_access_download=True)
+        urns = [work.license_pools[0].identifier.urn for work in [w1, w2]]
+
+        uploader = DummyS3Uploader()
+        script = CustomOPDSFeedGenerationScript(_db=self._db)
+        cmd_args = ['-t', 'Test Feed', '-d', 'http://ls.org',
+                    '--page-size', '1', '-u', urns[0], urns[1]]
+
+        script.run(uploader=uploader, cmd_args=cmd_args)
+
+        eq_(4, len(uploader.uploaded))
+
+        expected_filenames = [
+            'test-feed.opds', 'test-feed_2.opds', 'test-feed_author.opds',
+            'test-feed_author_2.opds'
+        ]
+        expected = [uploader.content_root()+f for f in expected_filenames]
+        result = [rep.mirror_url for rep in uploader.uploaded]
+        eq_(sorted(expected), sorted(result))
+
+    def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
         alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
         zeta = self._work(title='Zeta', authors='Phi', with_open_access_download=True)
 
-        qu = self._db.query(Work, Edition).join(Work.presentation_edition)
+        identifiers = list()
+        for work in [omega, alpha, zeta]:
+            identifier = work.license_pools[0].identifier
+            identifiers.append(identifier)
+        lane = IdentifiersLane(self._db, identifiers, "Testing")
+
         script = CustomOPDSFeedGenerationScript(_db=self._db)
-        result = script.create_faceted_feeds(
-            qu, 'Test Feed', 'https://mta.librarysimplified.org'
+        result = script.create_feeds(
+            lane, 'Test Feed', 'https://mta.librarysimplified.org', 50
         )
 
         eq_(True, isinstance(result, dict))
         eq_(['test-feed', 'test-feed_author'], sorted(result.keys()))
-        for key, feed in result.items():
-            eq_(True, isinstance(feed, AcquisitionFeed))
-            parsed = feedparser.parse(unicode(feed))
+        for key, [feed] in result.items():
+            eq_(True, isinstance(feed, CachedFeed))
+            parsed = feedparser.parse(feed.content)
             [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
             if key == 'test-feed':
                 # The entries are sorted by title, by default.
@@ -93,3 +131,47 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
                 eq_('Author', active_facet_link.get('title'))
                 authors = [e.simplified_sort_name for e in parsed.entries]
                 eq_(['Iota', 'Phi', 'Theta'], authors)
+
+    def test_create_feed_pages(self):
+        w1 = self._work(with_open_access_download=True)
+        w2 = self._work(with_open_access_download=True)
+
+        identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
+
+        pagination = Pagination(size=1)
+        lane = IdentifiersLane(self._db, identifiers, "Testing Pages")
+        facet = Facets('main', 'always', 'title')
+        annotator = StaticFeedAnnotator('https://ls.org', 'test-feed')
+
+        script = CustomOPDSFeedGenerationScript(_db=self._db)
+        result = list(script.create_feed_pages(
+            lane, pagination, 'test-feed', 'https://ls.org', annotator,
+            facet
+        ))
+
+        # Two feeds are returned with the proper links.
+        [first, second] = result
+        def links_by_rel(parsed_feed, rel):
+            return [l for l in parsed_feed.feed.links if l['rel']==rel]
+
+        parsed = feedparser.parse(first.content)
+        [entry] = parsed.entries
+        eq_(w1.title, entry.title)
+        eq_(w1.author, entry.simplified_sort_name)
+
+        [next_link] = links_by_rel(parsed, 'next')
+        eq_(next_link.href, 'https://ls.org/test-feed_title_2.opds')
+        eq_([], links_by_rel(parsed, 'previous'))
+        eq_([], links_by_rel(parsed, 'first'))
+
+        parsed = feedparser.parse(second.content)
+        [entry] = parsed.entries
+        eq_(w2.title, entry.title)
+        eq_(w2.author, entry.simplified_sort_name)
+
+        [previous_link] = links_by_rel(parsed, 'previous')
+        [first_link] = links_by_rel(parsed, 'first')
+        first = 'https://ls.org/test-feed_title.opds'
+        eq_(previous_link.href, first)
+        eq_(first_link.href, first)
+        eq_([], links_by_rel(parsed, 'next'))

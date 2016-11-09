@@ -102,20 +102,49 @@ class StaticFeedAnnotator(ContentServerAnnotator):
 
     """An Annotator to work with static feeds generated via script"""
 
-    def __init__(self, base_url, base_filename, default_order=None):
+    def __init__(self, base_url, base_filename, default_order=None, search_link=None):
         self.default_order = default_order
+        self.search_link = search_link
         self.base_url = base_url
 
         if base_filename.endswith('.opds'):
             base_filename = base_filename[:-5]
         self.base_filename = base_filename
 
-    def facet_url(self, facets):
+    def default_lane_url(self):
+        return self.base_url + '/' + self.base_filename + '.opds'
+
+    def filename_facet_segment(self, facets):
         ordered_by = list(facets.items())[0][1]
-
-        filename = self.base_filename
         if ordered_by != self.default_order:
-            filename += ('_'+ordered_by)
-        filename += '.opds'
+            return '_' + ordered_by
+        return ''
 
-        return self.base_url + '/' + filename
+    def facet_url(self, facets):
+        """Incoporate order facets into filenames for static feeds
+        """
+        filename = self.base_filename
+        filename += self.filename_facet_segment(facets)
+
+        return self.base_url + '/' + filename + '.opds'
+
+    def feed_url(self, lane, facets, pagination):
+        """Incorporate pages into filenames for static feeds
+        """
+        filename = self.base_filename
+        filename += self.filename_facet_segment(facets)
+
+        page_number = (pagination.offset / pagination.size) + 1
+        if page_number > 1:
+            filename += ('_%i' % page_number)
+
+        return self.base_url + '/' + filename + '.opds'
+
+    def annotate_feed(self, feed, lane):
+        if self.search_link:
+            OPDSFeed.add_link_to_feed(
+                feed.feed,
+                rel="search",
+                href=self.search_link,
+                type="application/opensearchdescription+xml")
+                
