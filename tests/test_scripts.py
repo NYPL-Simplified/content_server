@@ -1,4 +1,5 @@
 import feedparser
+import os
 from nose.tools import (
     assert_raises,
     eq_,
@@ -114,7 +115,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         eq_(sorted(expected), sorted(result))
 
     def test_make_lanes_from_csv(self):
-        csv_filename = 'tests/files/scripts/sample.csv'
+        csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
         top_level = self.script.make_lanes_from_csv(csv_filename)
 
         def sublane_names(parent):
@@ -164,7 +165,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         eq_(0, len(horror.sublanes))
 
         # If it did have works marked, it would raise an error.
-        csv_filename = 'tests/files/scripts/error.csv'
+        csv_filename = os.path.abspath('tests/files/scripts/error.csv')
         assert_raises(ValueError, self.script.make_lanes_from_csv, csv_filename)
 
     def test_create_feeds(self):
