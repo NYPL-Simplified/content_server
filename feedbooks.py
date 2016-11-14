@@ -2,7 +2,10 @@ import datetime
 import feedparser
 from nose.tools import set_trace
 from core.opds import OPDSFeed
-from core.opds_import import OPDSImporterWithS3Mirror
+from core.opds_import import (
+    OPDSImporterWithS3Mirror,
+    OPDSXMLParser,
+)
 from core.model import (
     DataSource,
     Hyperlink,
@@ -29,7 +32,8 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
             self.improve_description(id, m)
         return metadata, failures
 
-    def rights_for_entry(self, entry):
+    @classmethod
+    def rights_uri_from_feedparser_entry(cls, entry):
         """Determine the URI that best encapsulates the rights status of
         the downloads associated with this book.
 
@@ -44,8 +48,22 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         rights = entry.get('rights', "")
         source = entry.get('dcterms_source', '')
         publication_year = entry.get('dcterms_issued', None)
+        set_trace()
         return RehostingPolicy.rights_uri(rights, source, publication_year)
-            
+
+    @classmethod
+    def rights_uri_from_entry_tag(cls, entry):
+        rights = OPDSXMLParser._xpath1(entry, 'atom:rights')
+        if rights is not None:
+            rights = rights.text
+        source = OPDSXMLParser._xpath1(entry, 'dcterms:source')
+        if source is not None:
+            source = source.text
+        publication_year = OPDSXMLParser._xpath1(entry, 'dcterms:issued')
+        if publication_year is not None:
+            publication_year = publication_year.text
+        return RehostingPolicy.rights_uri(rights, source, publication_year)
+    
     @classmethod
     def make_link_data(cls, rel, href=None, media_type=None, rights_uri=None,
                        content=None):

@@ -201,7 +201,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             self.http.requests
         )
 
-        # Three 'books' were uploaded to the mock S3
+        # Three 'books' were uploaded to the mock S3 service.
         eq_(['http://s3.amazonaws.com/test.content.bucket/FeedBooks/URI/http%3A//www.feedbooks.com/book/677/Discourse%20on%20the%20Method.' + extension
              for extension in 'epub', 'mobi', 'pdf'
         ],
@@ -213,6 +213,11 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             [x.delivery_mechanism.content_type
              for x in pool.delivery_mechanisms]
         )            
+
+        # From information contained in the OPDS entry we determined
+        # all three links to be CC-BY-NC.
+        eq_([u'https://creativecommons.org/licenses/by-nc/4.0'] * 3,
+            [x.rights_status.uri for x in pool.delivery_mechanisms])
         
     def test_in_copyright_book_not_mirrored(self):
 
@@ -222,10 +227,12 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             content=feed
         )
 
-        results = self.importer.import_from_feed(
+        [edition], [pool], [work], failures = self.importer.import_from_feed(
             feed, immediately_presentation_ready=True,
         )
-
+        set_trace()
+        pass
+        
 class TestRehostingPolicy(object):
     
     def test_rights_uri(self):
