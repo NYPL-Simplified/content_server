@@ -27,7 +27,6 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         )
         for id, m in metadata.items():
             self.improve_description(id, m)
-            set_trace()
         return metadata, failures
 
     def rights_for_entry(self, entry):

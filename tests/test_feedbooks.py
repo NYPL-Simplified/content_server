@@ -1,3 +1,4 @@
+# encoding: utf-8
 import os
 from nose.tools import (
     eq_,
@@ -11,7 +12,8 @@ from ..feedbooks import (
 from ..core.model import (
     DataSource,
     Hyperlink,
-    RightsStatus
+    Representation,
+    RightsStatus,
 )
 from ..core.metadata_layer import (
     Metadata,
@@ -31,10 +33,12 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
     def setup(self):
         super(TestFeedbooksOPDSImporter, self).setup()
         self.http = DummyHTTPClient()
+        self.metadata = DummyMetadataClient()
+        self.mirror = DummyS3Uploader()
         self.importer = FeedbooksOPDSImporter(
             self._db, http_get = self.http.do_get,
-            mirror = DummyS3Uploader(),
-            metadata_client = DummyMetadataClient()
+            mirror=self.mirror,
+            metadata_client=self.metadata,
         )
         self.data_source = DataSource.lookup(
             self._db, self.importer.DATA_SOURCE_NAME, autocreate=True,
@@ -143,17 +147,79 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         feed = self.sample_file("feed_with_open_access_book.atom")
         imports, errors = self.importer.extract_feed_data(feed)
         [book] = imports.values()
-        [open_access] = [x for x in book.links
-                         if x.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD]
-        set_trace()
-        pass
+        open_access_links = [x for x in book.circulation.links
+                             if x.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD]
+        links = sorted(x.href for x in open_access_links)
+        eq_(['http://www.feedbooks.com/book/677.epub',
+             'http://www.feedbooks.com/book/677.mobi',
+             'http://www.feedbooks.com/book/677.pdf'], links)
+
+    def test_open_access_book_mirrored(self):
+        feed = self.sample_file("feed_with_open_access_book.atom")
+        self.http.queue_response(
+            200, OPDSFeed.ACQUISITION_FEED_TYPE,
+            content=feed
+        )
+        self.metadata.lookups = { u"René Descartes" : "Descartes, Rene" }
+
+        # The request to
+        # http://covers.feedbooks.net/book/677.jpg?size=large&t=1428398185'
+        # will result in a 404 error, and the image will not be
+        # mirrored.
+        self.http.queue_response(404, media_type="text/plain")
+
+        # The requests to the various copies of the book will succeed,
+        # and the books will be mirrored.
+        self.http.queue_response(
+            200, content='I am 667.pdf',
+            media_type=Representation.PDF_MEDIA_TYPE,
+        )
+        self.http.queue_response(
+            200, content="I am 667.mobi",
+            media_type="application/x-mobipocket-ebook"
+        )
+        self.http.queue_response(
+            200, content='I am 667.epub',
+            media_type=Representation.EPUB_MEDIA_TYPE
+        )
+
+        [edition], [pool], [work], failures = self.importer.import_from_feed(
+            feed, immediately_presentation_ready=True,
+        )
+
+        eq_({}, failures)
+
+        # The work has been created and has metadata.
+        eq_("Discourse on the Method", work.title)
+        eq_(u'Ren\xe9 Descartes', work.author)
+
+        # Four mock HTTP requests were made.
+        eq_(['http://www.feedbooks.com/book/677.epub',
+             'http://www.feedbooks.com/book/677.mobi',
+             'http://www.feedbooks.com/book/677.pdf',
+             'http://covers.feedbooks.net/book/677.jpg?size=large&t=1428398185'],
+            self.http.requests
+        )
+
+        # Three 'books' were uploaded to the mock S3
+        eq_(['http://s3.amazonaws.com/test.content.bucket/FeedBooks/URI/http%3A//www.feedbooks.com/book/677/Discourse%20on%20the%20Method.' + extension
+             for extension in 'epub', 'mobi', 'pdf'
+        ],
+            [x.mirror_url for x in self.mirror.uploaded]
+        )
+        eq_(
+            [u'application/epub+zip', 'application/x-mobipocket-ebook',
+             'application/pdf'],
+            [x.delivery_mechanism.content_type
+             for x in pool.delivery_mechanisms]
+        )            
         
     def test_in_copyright_book_not_mirrored(self):
 
         feed = self.sample_file("feed_with_in_copyright_book.atom")
         self.http.queue_response(
             200, OPDSFeed.ACQUISITION_FEED_TYPE,
-            content=""
+            content=feed
         )
 
         results = self.importer.import_from_feed(
