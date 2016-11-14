@@ -19,7 +19,10 @@ from ..core.metadata_layer import (
 )
 from ..core.opds import OPDSFeed
 from ..core.s3 import DummyS3Uploader
-from ..core.testing import DummyHTTPClient
+from ..core.testing import (
+    DummyHTTPClient,
+    DummyMetadataClient,
+)
 
 LIFE_PLUS_70 = "This work is available for countries where copyright is Life+70."
 
@@ -29,10 +32,13 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         super(TestFeedbooksOPDSImporter, self).setup()
         self.http = DummyHTTPClient()
         self.importer = FeedbooksOPDSImporter(
-            self._db, http_get = self.http.do_get
+            self._db, http_get = self.http.do_get,
+            mirror = DummyS3Uploader(),
+            metadata_client = DummyMetadataClient()
         )
         self.data_source = DataSource.lookup(
-            self._db, self.importer.DATA_SOURCE_NAME, autocreate=True
+            self._db, self.importer.DATA_SOURCE_NAME, autocreate=True,
+            offers_licenses=True
         )
         
         base_path = os.path.split(__file__)[0]
@@ -132,7 +138,28 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
 
         # Two HTTP requests were made.
         eq_(['http://foo/', 'http://baz/'], self.http.requests)
+
+    def test_generic_acquisition_link_picked_up_as_open_access(self):
+        feed = self.sample_file("feed_with_open_access_book.atom")
+        imports, errors = self.importer.extract_feed_data(feed)
+        [book] = imports.values()
+        [open_access] = [x for x in book.links
+                         if x.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD]
+        set_trace()
+        pass
         
+    def test_in_copyright_book_not_mirrored(self):
+
+        feed = self.sample_file("feed_with_in_copyright_book.atom")
+        self.http.queue_response(
+            200, OPDSFeed.ACQUISITION_FEED_TYPE,
+            content=""
+        )
+
+        results = self.importer.import_from_feed(
+            feed, immediately_presentation_ready=True,
+        )
+
 class TestRehostingPolicy(object):
     
     def test_rights_uri(self):
@@ -160,6 +187,16 @@ class TestRehostingPolicy(object):
         )
         eq_(RightsStatus.CC_BY_SA, sharealike)
 
+        # A Feedbooks work based on a text whose rights status cannot
+        # be determined gets an unknown RightsStatus. We will not be
+        # hosting this book, but we might change our minds after
+        # investigating.
+        unknown = RehostingPolicy.rights_uri(
+            RehostingPolicy.RIGHTS_UNKNOWN, "mywebsite.com", 2016
+        )
+        eq_(RightsStatus.UNKNOWN, unknown)
+        
+        
     def test_can_rehost_us(self):
         # We will rehost anything published prior to 1923.
         eq_(
@@ -194,5 +231,14 @@ class TestRehostingPolicy(object):
         eq_(
             False, RehostingPolicy.can_rehost_us(
                 LIFE_PLUS_70, "gutenberg.net.au", 1930
+            )
+        )
+
+        # If a book would require manual work to determine copyright
+        # status, we will distinguish slightly between that case and
+        # the case where we're pretty sure.
+        eq_(
+            None, RehostingPolicy.can_rehost_us(
+                RehostingPolicy.RIGHTS_UNKNOWN, "Some random website", 2016
             )
         )

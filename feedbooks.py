@@ -2,7 +2,7 @@ import datetime
 import feedparser
 from nose.tools import set_trace
 from core.opds import OPDSFeed
-from core.opds_import import OPDSImporter
+from core.opds_import import OPDSImporterWithS3Mirror
 from core.model import (
     DataSource,
     Hyperlink,
@@ -11,7 +11,7 @@ from core.model import (
     RightsStatus,
 )
 
-class FeedbooksOPDSImporter(OPDSImporter):
+class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
 
     DATA_SOURCE_NAME = "FeedBooks"
     THIRTY_DAYS = datetime.timedelta(days=30)
@@ -27,6 +27,7 @@ class FeedbooksOPDSImporter(OPDSImporter):
         )
         for id, m in metadata.items():
             self.improve_description(id, m)
+            set_trace()
         return metadata, failures
 
     def rights_for_entry(self, entry):
@@ -46,6 +47,23 @@ class FeedbooksOPDSImporter(OPDSImporter):
         publication_year = entry.get('dcterms_issued', None)
         return RehostingPolicy.rights_uri(rights, source, publication_year)
             
+    @classmethod
+    def make_link_data(cls, rel, href=None, media_type=None, rights_uri=None,
+                       content=None):
+        """Turn basic link information into a LinkData object.
+
+        FeedBooks puts open-access content behind generic 'acquisition'
+        links. We want to treat them as open-access links.
+
+        At the same time, we _don't_ want to mirror content we don't have
+        the right to rehost.
+        """
+        if rel==Hyperlink.GENERIC_OPDS_ACQUISITION and media_type:
+            rel = Hyperlink.OPEN_ACCESS_DOWNLOAD
+        return OPDSImporterWithS3Mirror.make_link_data(
+            rel, href, media_type, rights_uri, content
+        )
+    
     def improve_description(self, id, metadata):
         """Improve the description associated with a book,
         if possible.
@@ -63,6 +81,10 @@ class FeedbooksOPDSImporter(OPDSImporter):
                 alternate_links.append(x)
             if x.rel == Hyperlink.DESCRIPTION:
                 existing_descriptions.append((x.media_type, x.content))
+            elif x.rel == Hyperlink.GENERIC_OPDS_ACQUISITION:
+                # This feed contains open-access links
+                # coded as generic acquisition links.
+                x.rel = Hyperlink.OPEN_ACCESS_DOWNLOAD
             else:
                 everything_except_descriptions.append(x)
 
@@ -89,7 +111,8 @@ class FeedbooksOPDSImporter(OPDSImporter):
                 continue
             [entry] = parsed['entries']
             data_source = DataSource.lookup(
-                self._db, self.data_source_name, autocreate=True
+                self._db, self.data_source_name, autocreate=True,
+                offers_licenses=True
             )
             detail_id, new_detail, failure = self.data_detail_for_feedparser_entry(
                 entry, data_source
@@ -168,6 +191,8 @@ class RehostingPolicy(object):
         "Attribution Non-Commercial Share Alike (cc by-nc-sa)",
     ])
 
+    RIGHTS_UNKNOWN = "Please read the legal notice included in this e-book and/or check the copyright status in your country."
+    
     # These websites are hosted in the US and specialize in
     # open-access content. We will accept all FeedBooks titles taken
     # from these sites, even post-1923 titles.
@@ -186,10 +211,17 @@ class RehostingPolicy(object):
     def rights_uri(cls, rights, source, publication_year):
         if isinstance(publication_year, basestring):
             publication_year = int(publication_year)
-        if not cls.can_rehost_us(rights, source, publication_year):
+
+        can_rehost = cls.can_rehost_us(rights, source, publication_year)
+        if can_rehost is False:
             # We believe this book is still under copyright in the US
             # and we should not rehost it.
             return RightsStatus.IN_COPYRIGHT
+
+        if can_rehost is None:
+            # We don't have enough information to know whether the book
+            # is under copyright in the US. We should not host it.
+            return RightsStatus.UNKNOWN
 
         if rights in cls.RIGHTS_DICT:
             # The CC license of the underlying text means it cannot be
@@ -210,8 +242,11 @@ class RehostingPolicy(object):
 
         :param publication_year: When the text was originally published.
 
-        :return: True or False
-        """
+        :return: True if we can rehost in the US, False if we can't,
+        None if we're not sure. The distinction between False and None
+        is only useful when making lists of books that need to have
+        their rights status manually investigated.
+        """    
         if publication_year < cls.PUBLIC_DOMAIN_CUTOFF:
             # We will rehost anything published prior to 1923, no
             # matter where it came from.
@@ -243,7 +278,15 @@ class RehostingPolicy(object):
         # Project Gutenberg with US Project Gutenberg.
         if ('gutenberg.net' in source and not 'gutenberg.net.au' in source):
             return True
-
+        
         # Unless one of the above conditions is met, we must assume
         # the book cannot be rehosted in the US.
+        if rights == cls.RIGHTS_UNKNOWN:
+            # To be on the safe side we're not going to host this
+            # book, but we actually don't know that it's unhostable.
+            return None
+
+        # In this case we're pretty sure. The rights status indicates
+        # some kind of general incompatible restriction (such as
+        # Life+70) and it's not a pre-1923 book.
         return False
