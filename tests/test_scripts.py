@@ -36,8 +36,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         self.script = CustomOPDSFeedGenerationScript(_db=self._db)
 
     def test_run(self):
-        cmd_args = ['fake.csv', '-t', 'Test Feed', '-d',
-                    'mta.librarysimplified.org', '-u']
+        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
 
         # An incorrect CSV document raises a ValueError when there are
         # also no URNs present.
@@ -58,7 +57,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         urn1 = requested.license_pools[0].identifier.urn
         urn2 = suppressed.license_pools[0].identifier.urn
 
-        cmd_args = ['fake.csv', '-t', 'Test Feed', '-d', 'mta.librarysimplified.org',
+        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org',
                     '-u', '--urns', no_pool, urn1, urn2]
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
@@ -67,7 +66,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         for feed in self.uploader.content:
             parsed = feedparser.parse(feed)
             eq_(u'mta.librarysimplified.org', parsed.feed.id)
-            eq_(u'Test Feed', parsed.feed.title)
+            eq_(StaticFeedAnnotator.TOP_LEVEL_LANE_NAME, parsed.feed.title)
 
             # There are links for the different facets.
             links = parsed.feed.links
@@ -94,15 +93,15 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         w2 = self._work(with_open_access_download=True)
         urns = [work.license_pools[0].identifier.urn for work in [w1, w2]]
 
-        cmd_args = ['fake.csv', '-t', 'Test Feed', '-d', 'http://ls.org',
-                    '--page-size', '1', '-u', '--urns', urns[0], urns[1]]
+        cmd_args = ['fake.csv', '-d', 'http://ls.org', '--page-size', '1',
+                    '-u', '--urns', urns[0], urns[1]]
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
         eq_(4, len(self.uploader.uploaded))
 
         expected_filenames = [
-            'test-feed.opds', 'test-feed_2.opds', 'test-feed_author.opds',
-            'test-feed_author_2.opds'
+            'index.opds', 'index_2.opds', 'index_author.opds',
+            'index_author_2.opds'
         ]
         expected = [self.uploader.content_root()+f for f in expected_filenames]
         result = [rep.mirror_url for rep in self.uploader.uploaded]
@@ -110,7 +109,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
 
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
-        top_level = self.script.make_lanes_from_csv(csv_filename)
+        top_level = self.script.make_lanes_from_csv(csv_filename)[0]
 
         def sublane_names(parent):
             return sorted([s.name for s in parent.sublanes])
@@ -162,6 +161,13 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         csv_filename = os.path.abspath('tests/files/scripts/error.csv')
         assert_raises(ValueError, self.script.make_lanes_from_csv, csv_filename)
 
+        # If the CSV doesn't include columns for any lanes, a single
+        # IdentifiersLane with works is returned.
+        csv_filename = os.path.abspath('tests/files/scripts/laneless.csv')
+        result = self.script.make_lanes_from_csv(csv_filename)[0]
+        eq_(True, isinstance(result, IdentifiersLane))
+        eq_(3, len(result.identifiers))
+
     def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
         alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
@@ -171,25 +177,27 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         for work in [omega, alpha, zeta]:
             identifier = work.license_pools[0].identifier
             identifiers.append(identifier)
-        lane = IdentifiersLane(self._db, identifiers, "Testing")
-
-        result = self.script.create_feeds(
-            lane, 'Test Feed', 'https://mta.librarysimplified.org', 50
+        lane = IdentifiersLane(
+            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
 
-        eq_(True, isinstance(result, dict))
-        eq_(['test-feed', 'test-feed_author'], sorted(result.keys()))
-        for key, [feed] in result.items():
+        results = list(self.script.create_feeds(
+            [lane], 'https://mta.librarysimplified.org', 50
+        ))
+
+        eq_(2, len(results))
+        eq_(['index', 'index_author'], sorted([r[0] for r in results]))
+        for filename, [feed] in results:
             eq_(True, isinstance(feed, CachedFeed))
             parsed = feedparser.parse(feed.content)
             [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
-            if key == 'test-feed':
+            if filename == 'index':
                 # The entries are sorted by title, by default.
                 eq_('Title', active_facet_link.get('title'))
                 titles = [e.title for e in parsed.entries]
                 eq_(['Alpha', 'Omega', 'Zeta'], titles)
 
-            if key == 'test-feed_author':
+            if filename == 'index_author':
                 # The entries can also be sorted by author.
                 eq_('Author', active_facet_link.get('title'))
                 authors = [e.simplified_sort_name for e in parsed.entries]
@@ -202,14 +210,15 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
 
         pagination = Pagination(size=1)
-        lane = IdentifiersLane(self._db, identifiers, "Testing Pages")
+        lane = IdentifiersLane(
+            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+        )
         facet = Facets('main', 'always', 'title')
-        annotator = StaticFeedAnnotator('https://ls.org', 'test-feed')
+        annotator = StaticFeedAnnotator('https://ls.org', lane)
 
-        result = list(self.script.create_feed_pages(
-            lane, pagination, 'test-feed', 'https://ls.org', annotator,
-            facet
-        ))
+        result = self.script.create_feed_pages(
+            lane, pagination, 'https://ls.org', annotator, facet
+        )
 
         # Two feeds are returned with the proper links.
         [first, second] = result
@@ -222,7 +231,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         eq_(w1.author, entry.simplified_sort_name)
 
         [next_link] = links_by_rel(parsed, 'next')
-        eq_(next_link.href, 'https://ls.org/test-feed_title_2.opds')
+        eq_(next_link.href, 'https://ls.org/index_title_2.opds')
         eq_([], links_by_rel(parsed, 'previous'))
         eq_([], links_by_rel(parsed, 'first'))
 
@@ -233,7 +242,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
 
         [previous_link] = links_by_rel(parsed, 'previous')
         [first_link] = links_by_rel(parsed, 'first')
-        first = 'https://ls.org/test-feed_title.opds'
+        first = 'https://ls.org/index_title.opds'
         eq_(previous_link.href, first)
         eq_(first_link.href, first)
         eq_([], links_by_rel(parsed, 'next'))
