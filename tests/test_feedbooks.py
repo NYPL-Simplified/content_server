@@ -146,6 +146,10 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         eq_(['http://foo/', 'http://baz/'], self.http.requests)
 
     def test_generic_acquisition_link_picked_up_as_open_access(self):
+        """The OPDS feed has links with generic OPDS "acquisition"
+        relations. We know that these should be open-access relations,
+        and we modify the relations on the way in.
+        """
         feed = self.sample_file("feed_with_open_access_book.atom")
         imports, errors = self.importer.extract_feed_data(feed)
         [book] = imports.values()
@@ -220,6 +224,9 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # all three links to be CC-BY-NC.
         eq_([u'https://creativecommons.org/licenses/by-nc/4.0'] * 3,
             [x.rights_status.uri for x in pool.delivery_mechanisms])
+
+        # The pool is marked as open-access.
+        eq_(True, pool.open_access)
         
     def test_in_copyright_book_not_mirrored(self):
 
@@ -265,8 +272,8 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # has open-access links, they're not licensed under terms we
         # can use.
         eq_(False, pool.open_access)
-        pass
-        
+
+
 class TestRehostingPolicy(object):
     
     def test_rights_uri(self):
