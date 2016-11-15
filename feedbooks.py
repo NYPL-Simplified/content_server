@@ -34,19 +34,14 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
 
     @classmethod
     def rights_uri_from_feedparser_entry(cls, entry):
-        """Determine the URI that best encapsulates the rights status of
-        the downloads associated with this book.
+        """(Refuse to) determine the URI that best encapsulates the rights
+        status of the downloads associated with this book.
 
-        This answer is not reliable because we don't actually have
-        access to dcterms:issued, but we do the best we can. This will
-        be called by _detail_for_feedparser_entry and fixed by
-        _detail_for_elementtree_entry.
+        We cannot answer this question from within feedparser code; we have
+        to wait until we enter elementtree code.
         """
-        rights = entry.get('rights', "")
-        source = entry.get('dcterms_source', '')
-        issued = entry.get('dcterms_issued', None) # :(
-        return RehostingPolicy.rights_uri(rights, source, issued)
-
+        return None
+        
     @classmethod
     def rights_uri_from_entry_tag(cls, entry):
         rights = OPDSXMLParser._xpath1(entry, 'atom:rights')
@@ -61,24 +56,23 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         return RehostingPolicy.rights_uri(rights, source, publication_year)
 
     @classmethod
-    def _detail_for_elementtree_entry(cls, parser, entry_tag, feed_url=None,
-                                      feedparser_detail=None):
-        """Correct the default rights URI in the circulation data obtained
-        previously for this entry.
+    def _detail_for_elementtree_entry(cls, parser, entry_tag, feed_url=None):
+        """Determine a more accurate value for this entry's default rights
+        URI.
 
-        We have to correct the data after the fact instead of getting
-        it right within rights_uri_from_feedparser_entry, because
+        We can't get it right within the Feedparser code, because
         dcterms:issued (which we use to determine whether a work is
         public domain in the United States) is not available through
         Feedparser.
         """
-        rights_uri = cls.rights_uri_from_entry_tag(entry_tag)
-        circulation = feedparser_detail.setdefault('circulation', {})
-        circulation['default_rights_uri'] = rights_uri            
-        return super(FeedbooksOPDSImporter, cls)._detail_for_elementtree_entry(
-            parser, entry_tag, feed_url, feedparser_detail
+        detail = super(FeedbooksOPDSImporter, cls)._detail_for_elementtree_entry(
+            parser, entry_tag, feed_url
         )
-    
+        rights_uri = cls.rights_uri_from_entry_tag(entry_tag)
+        circulation = detail.setdefault('circulation', {})
+        circulation['default_rights_uri'] =rights_uri
+        return detail
+        
     @classmethod
     def make_link_data(cls, rel, href=None, media_type=None, rights_uri=None,
                        content=None):

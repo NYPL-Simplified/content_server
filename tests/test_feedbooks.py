@@ -53,15 +53,6 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         data = open(path).read()
         return data
 
-    def test_rights_uri_from_feedparser_entry(self):
-        entry = dict(rights=LIFE_PLUS_70,
-                     source='gutenberg.net.au')
-        expect = RehostingPolicy.rights_uri(
-            LIFE_PLUS_70, 'gutenberg.net.au', None
-        )
-        actual = self.importer.rights_uri_from_feedparser_entry(entry) 
-        eq_(expect, actual)
-
     def test_extract_feed_data_improves_descriptions(self):
         feed = self.sample_file("feed.atom")
         self.http.queue_response(200, OPDSFeed.ENTRY_TYPE,
