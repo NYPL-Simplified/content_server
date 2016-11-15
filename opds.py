@@ -172,7 +172,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         if lane:
             filename = self.lane_filename(lane)
         else:
-            filename = self.home_filename
+            filename = self.HOME_FILENAME
         return self.base_url + '/' + filename + '.opds'
 
     def lane_url(self, lane):

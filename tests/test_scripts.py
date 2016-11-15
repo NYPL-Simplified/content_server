@@ -35,16 +35,7 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         self.uploader = DummyS3Uploader()
         self.script = CustomOPDSFeedGenerationScript(_db=self._db)
 
-    def test_run(self):
-        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
-
-        # An incorrect CSV document raises a ValueError when there are
-        # also no URNs present.
-        assert_raises(
-            ValueError, self.script.run, uploader=self.uploader,
-            cmd_args=cmd_args
-        )
-
+    def test_run_with_urns(self):
         not_requested = self._work(with_open_access_download=True)
         requested = self._work(with_open_access_download=True)
 
@@ -106,6 +97,99 @@ class TestCustomOPDSFeedGenerationScript(DatabaseTest):
         expected = [self.uploader.content_root()+f for f in expected_filenames]
         result = [rep.mirror_url for rep in self.uploader.uploaded]
         eq_(sorted(expected), sorted(result))
+
+    def test_run_with_csv(self):
+        # An incorrect CSV document raises a ValueError when there are
+        # also no URNs present.
+        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
+        assert_raises(
+            ValueError, self.script.run, uploader=self.uploader,
+            cmd_args=cmd_args
+        )
+
+        works = [self._work(with_open_access_download=True) for _ in range(4)]
+        [w1, w2, w3, w4] = works
+        csv_isbns = ['9781682280065', '9781682280027', '9781682280010', '9781682280058']
+        for idx, work in enumerate(works):
+            identifier = work.license_pools[0].identifier
+            identifier.type = Identifier.ISBN
+            identifier.identifier = csv_isbns[idx]
+        self._db.commit()
+
+        # With a proper CSV file, we get results.
+        url = 'https://ls.org'
+        cmd_args = ['tests/files/scripts/mini.csv', '-d', url, '-u']
+        self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+
+        # Nine feeds are created with the filenames we'd expect.
+        eq_(9, len(self.uploader.content))
+
+        expected_filenames = [
+            'index.opds', 'nonfiction.opds', 'nonfiction_author.opds',
+            'fiction.opds', 'fiction_horror.opds', 'fiction_horror_author.opds',
+            'fiction_poetry.opds', 'fiction_poetry_sonnets.opds',
+            'fiction_poetry_sonnets_author.opds'
+        ]
+
+        created = self._db.query(Representation.mirror_url).\
+            filter(Representation.mirror_url.like(self.uploader.content_root()+'%')).\
+            all()
+        created_filenames = [os.path.split(f[0])[1] for f in created]
+        eq_(sorted(expected_filenames), sorted(created_filenames))
+
+        def get_feed(filename):
+            like_str = self.uploader.content_root() + filename + '.opds'
+            representation = self._db.query(Representation).\
+                filter(Representation.mirror_url.like(like_str)).one()
+            if not representation:
+                return None
+            return feedparser.parse(representation.content)
+
+        def collection_links(feed):
+            entry_links = list()
+            [entry_links.extend(e.links) for e in feed.entries]
+            collections = [l.href for l in entry_links if l.rel=='collection']
+            return set(collections)
+
+        # All four works are shown in the index.
+        index = get_feed('index')
+        eq_(4, len(index.entries))
+
+        # It's a grouped feed with proper collection links.
+        expected = [url+'/'+f+'.opds' for f in ['fiction', 'nonfiction']]
+        eq_(sorted(set(expected)), sorted(collection_links(index)))
+
+        # Other intermediate lanes also have collection_links.
+        assert collection_links(get_feed('fiction'))
+        assert collection_links(get_feed('fiction_poetry'))
+
+        def has_facet_links(feed):
+            facet_links = [l for l in feed.feed.links if l.get('facetgroup')]
+            if facet_links:
+                return True
+            return False
+
+        # Nonfiction has no sublanes, so its a faceted feed with the
+        # proper Work.
+        nonfiction = get_feed('nonfiction')
+        [entry] = nonfiction.entries
+        eq_(entry.title, w2.title)
+        eq_(entry.simplified_sort_name, w2.author)
+        assert has_facet_links(nonfiction)
+
+        # There are two works in the Horror lane feed.
+        horror = get_feed('fiction_horror')
+        eq_(2, len(horror.entries))
+        eq_(sorted([w1.title, w4.title]), sorted([e.title for e in horror.entries]))
+        eq_(sorted([w1.author, w4.author]), sorted([e.simplified_sort_name for e in horror.entries]))
+        assert has_facet_links(horror)
+
+        # And one in the Sonnet lane.
+        sonnets = get_feed('fiction_poetry_sonnets')
+        [entry] = sonnets.entries
+        eq_(w3.title, entry.title)
+        eq_(w3.author, entry.simplified_sort_name)
+        assert has_facet_links(sonnets)
 
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
