@@ -240,8 +240,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         response = self.importer.import_from_feed(
             feed, immediately_presentation_ready=True,
         )
-        eq_([], response)
-        
+
         [edition], [pool], [work], failures = self.importer.import_from_feed(
             feed, immediately_presentation_ready=True,
         )
