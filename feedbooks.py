@@ -113,10 +113,6 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
                 alternate_links.append(x)
             if x.rel == Hyperlink.DESCRIPTION:
                 existing_descriptions.append((x.media_type, x.content))
-            elif x.rel == Hyperlink.GENERIC_OPDS_ACQUISITION:
-                # This feed contains open-access links
-                # coded as generic acquisition links.
-                x.rel = Hyperlink.OPEN_ACCESS_DOWNLOAD
             else:
                 everything_except_descriptions.append(x)
 
