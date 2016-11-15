@@ -53,12 +53,14 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         data = open(path).read()
         return data
 
-    def test_rights_for_entry(self):
+    def test_rights_uri_from_feedparser_entry(self):
         entry = dict(rights=LIFE_PLUS_70,
-                     source='gutenberg.net.au',
-                     publication_year="1922")
-        rights = self.importer.rights_for_entry(entry) 
-        eq_(RightsStatus.CC_BY_NC, rights)
+                     source='gutenberg.net.au')
+        expect = RehostingPolicy.rights_uri(
+            LIFE_PLUS_70, 'gutenberg.net.au', None
+        )
+        actual = self.importer.rights_uri_from_feedparser_entry(entry) 
+        eq_(expect, actual)
 
     def test_extract_feed_data_improves_descriptions(self):
         feed = self.sample_file("feed.atom")
@@ -245,6 +247,11 @@ class TestRehostingPolicy(object):
         )
         eq_(RightsStatus.IN_COPYRIGHT, pd_in_australia_only)
 
+        unknown_australia_publication = RehostingPolicy.rights_uri(
+            LIFE_PLUS_70, "gutenberg.net.au", None
+        )
+        eq_(RightsStatus.IN_COPYRIGHT, unknown_australia_publication)
+        
         # A Feedbooks work based on a text that is in the US public
         # domain is relicensed to us as CC-BY-NC.
         pd_in_us = RehostingPolicy.rights_uri(

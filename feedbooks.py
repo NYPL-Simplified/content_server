@@ -37,19 +37,15 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         """Determine the URI that best encapsulates the rights status of
         the downloads associated with this book.
 
-        Most of the time this will be CC-BY-NC, the rights status
-        associated with Feedbooks, or "full copyright", for books that
-        are redistributable in France but not in the US. In rare cases
-        it will be some other CC license that prohibits Feedbooks from
-        relicensing as CC-BY-NC.
-
-        :return: A URI.
+        This answer is not reliable because we don't actually have
+        access to dcterms:issued, but we do the best we can. This will
+        be called by _detail_for_feedparser_entry and fixed by
+        _detail_for_elementtree_entry.
         """
         rights = entry.get('rights', "")
         source = entry.get('dcterms_source', '')
-        publication_year = entry.get('dcterms_issued', None)
-        set_trace()
-        return RehostingPolicy.rights_uri(rights, source, publication_year)
+        issued = entry.get('dcterms_issued', None) # :(
+        return RehostingPolicy.rights_uri(rights, source, issued)
 
     @classmethod
     def rights_uri_from_entry_tag(cls, entry):
@@ -63,6 +59,26 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         if publication_year is not None:
             publication_year = publication_year.text
         return RehostingPolicy.rights_uri(rights, source, publication_year)
+
+    @classmethod
+    def _detail_for_elementtree_entry(cls, parser, entry_tag, feed_url=None,
+                                      feedparser_detail=None):
+        """Correct the default rights URI in the circulation data obtained
+        previously for this entry.
+
+        We have to correct the data after the fact instead of getting
+        it right within rights_uri_from_feedparser_entry, because
+        dcterms:issued (which we use to determine whether a work is
+        public domain in the United States) is not available through
+        Feedparser.
+        """
+        rights_uri = cls.rights_uri_from_entry_tag(entry_tag)
+        circulation = feedparser_detail.setdefault('circulation', {})
+        circulation['default_rights_uri'] = rights_uri            
+        return OPDSImporterWithS3Mirror._detail_for_elementtree_entry(
+            cls, parser, entry_tag, feed_url,
+            feedparser_detail
+        )
     
     @classmethod
     def make_link_data(cls, rel, href=None, media_type=None, rights_uri=None,
@@ -226,7 +242,7 @@ class RehostingPolicy(object):
 
     @classmethod
     def rights_uri(cls, rights, source, publication_year):
-        if isinstance(publication_year, basestring):
+        if publication_year and isinstance(publication_year, basestring):
             publication_year = int(publication_year)
 
         can_rehost = cls.can_rehost_us(rights, source, publication_year)
@@ -264,7 +280,7 @@ class RehostingPolicy(object):
         is only useful when making lists of books that need to have
         their rights status manually investigated.
         """    
-        if publication_year < cls.PUBLIC_DOMAIN_CUTOFF:
+        if publication_year and publication_year < cls.PUBLIC_DOMAIN_CUTOFF:
             # We will rehost anything published prior to 1923, no
             # matter where it came from.
             return True
