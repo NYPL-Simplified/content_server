@@ -223,6 +223,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         
     def test_in_copyright_book_not_mirrored(self):
 
+        self.metadata.lookups = { u"René Descartes" : "Descartes, Rene" }
         feed = self.sample_file("feed_with_in_copyright_book.atom")
         self.http.queue_response(
             200, OPDSFeed.ACQUISITION_FEED_TYPE,
@@ -232,7 +233,38 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         [edition], [pool], [work], failures = self.importer.import_from_feed(
             feed, immediately_presentation_ready=True,
         )
-        set_trace()
+
+        # The work has been created and has metadata.
+        eq_("Discourse on the Method", work.title)
+        eq_(u'Ren\xe9 Descartes', work.author)
+
+        # No mock HTTP requests were made.
+        eq_([], self.http.requests)
+
+        # Nothing was uploaded to the mock S3.
+        eq_([], self.mirror.uploaded)
+
+        # The LicensePool's delivery mechanisms are set appropriately
+        # to reflect an in-copyright work.
+        eq_([RightsStatus.IN_COPYRIGHT]*3,
+            [x.rights_status.uri for x in pool.delivery_mechanisms])        
+
+        # The DeliveryMechanisms are set as mirrored, but their 'mirror
+        # URL' is the same as the original URL. This is not the best
+        # outcome--it happens in Identifier.add_link--but it should be
+        # okay.
+        eq_(['http://www.feedbooks.com/book/677.epub',
+             'http://www.feedbooks.com/book/677.mobi',
+             'http://www.feedbooks.com/book/677.pdf'],
+            [x.resource.representation.mirror_url
+             for x in pool.delivery_mechanisms]
+        )
+
+        
+        # The pool is not marked as open-access because although it
+        # has open-access links, they're not licensed under terms we
+        # can use.
+        eq_(False, pool.open_access)
         pass
         
 class TestRehostingPolicy(object):

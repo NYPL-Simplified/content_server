@@ -75,9 +75,8 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         rights_uri = cls.rights_uri_from_entry_tag(entry_tag)
         circulation = feedparser_detail.setdefault('circulation', {})
         circulation['default_rights_uri'] = rights_uri            
-        return OPDSImporterWithS3Mirror._detail_for_elementtree_entry(
-            cls, parser, entry_tag, feed_url,
-            feedparser_detail
+        return super(FeedbooksOPDSImporter, cls)._detail_for_elementtree_entry(
+            parser, entry_tag, feed_url, feedparser_detail
         )
     
     @classmethod
@@ -93,7 +92,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         """
         if rel==Hyperlink.GENERIC_OPDS_ACQUISITION and media_type:
             rel = Hyperlink.OPEN_ACCESS_DOWNLOAD
-        return OPDSImporterWithS3Mirror.make_link_data(
+        return super(FeedbooksOPDSImporter, cls).make_link_data(
             rel, href, media_type, rights_uri, content
         )
     
