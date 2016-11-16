@@ -20,10 +20,11 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
     THIRTY_DAYS = datetime.timedelta(days=30)
 
     def __init__(self, _db, *args, **kwargs):
+        kwargs['data_source_offers_licenses'] = True
         super(FeedbooksOPDSImporter, self).__init__(
             _db, self.DATA_SOURCE_NAME, *args, **kwargs
         )
-    
+
     def extract_feed_data(self, feed, feed_url=None):
         metadata, failures = super(FeedbooksOPDSImporter, self).extract_feed_data(
             feed, feed_url
@@ -132,10 +133,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
                 # This is supposed to be a single entry, and it's not.
                 continue
             [entry] = parsed['entries']
-            data_source = DataSource.lookup(
-                self._db, self.data_source_name, autocreate=True,
-                offers_licenses=True
-            )
+            data_source = self.data_source
             detail_id, new_detail, failure = self.data_detail_for_feedparser_entry(
                 entry, data_source
             )
