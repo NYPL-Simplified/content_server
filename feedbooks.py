@@ -19,7 +19,10 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
     DATA_SOURCE_NAME = "FeedBooks"
     THIRTY_DAYS = datetime.timedelta(days=30)
 
-    def __init__(self, _db, *args, **kwargs):
+    def __init__(self, _db, data_source_name=None, *args, **kwargs):
+        """
+        :param data_source_name: Passed in by OPDSImportScript and ignored.
+        """
         kwargs['data_source_offers_licenses'] = True
         super(FeedbooksOPDSImporter, self).__init__(
             _db, self.DATA_SOURCE_NAME, *args, **kwargs
@@ -79,13 +82,15 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
                        content=None):
         """Turn basic link information into a LinkData object.
 
-        FeedBooks puts open-access content behind generic 'acquisition'
-        links. We want to treat them as open-access links.
-
-        At the same time, we _don't_ want to mirror content we don't have
-        the right to rehost.
+        FeedBooks puts open-access content behind generic
+        'acquisition' links. We want to treat the EPUBs as open-access
+        links and (at the request of FeedBooks) ignore the other
+        formats.
         """
-        if rel==Hyperlink.GENERIC_OPDS_ACQUISITION and media_type:
+        if (rel==Hyperlink.GENERIC_OPDS_ACQUISITION
+            and media_type
+            and media_type.startswith(Representation.EPUB_MEDIA_TYPE)
+        ):
             rel = Hyperlink.OPEN_ACCESS_DOWNLOAD
         return super(FeedbooksOPDSImporter, cls).make_link_data(
             rel, href, media_type, rights_uri, content
