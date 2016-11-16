@@ -136,10 +136,13 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # Two HTTP requests were made.
         eq_(['http://foo/', 'http://baz/'], self.http.requests)
 
-    def test_generic_acquisition_link_picked_up_as_open_access(self):
+    def test_generic_acquisition_epub_link_picked_up_as_open_access(self):
         """The OPDS feed has links with generic OPDS "acquisition"
-        relations. We know that these should be open-access relations,
-        and we modify the relations on the way in.
+        relations. We know that the EPUB link should be open-access
+        relations, and we modify its relation on the way in.
+
+        We do not modify the link relation for links to the other
+        formats, which means they don't get picked up at all.
         """
         feed = self.sample_file("feed_with_open_access_book.atom")
         imports, errors = self.importer.extract_feed_data(feed)
@@ -147,10 +150,12 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         open_access_links = [x for x in book.circulation.links
                              if x.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD]
         links = sorted(x.href for x in open_access_links)
-        eq_(['http://www.feedbooks.com/book/677.epub',
-             'http://www.feedbooks.com/book/677.mobi',
-             'http://www.feedbooks.com/book/677.pdf'], links)
+        eq_(['http://www.feedbooks.com/book/677.epub'], links)
 
+        generic_links = [x for x in book.circulation.links
+                         if x.rel==Hyperlink.GENERIC_OPDS_ACQUISITION]
+        eq_([], generic_links)
+        
     def test_open_access_book_mirrored(self):
         feed = self.sample_file("feed_with_open_access_book.atom")
         self.http.queue_response(
@@ -168,14 +173,6 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # The requests to the various copies of the book will succeed,
         # and the books will be mirrored.
         self.http.queue_response(
-            200, content='I am 667.pdf',
-            media_type=Representation.PDF_MEDIA_TYPE,
-        )
-        self.http.queue_response(
-            200, content="I am 667.mobi",
-            media_type="application/x-mobipocket-ebook"
-        )
-        self.http.queue_response(
             200, content='I am 667.epub',
             media_type=Representation.EPUB_MEDIA_TYPE
         )
@@ -190,33 +187,28 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         eq_("Discourse on the Method", work.title)
         eq_(u'Ren\xe9 Descartes', work.author)
 
-        # Four mock HTTP requests were made.
+        # Two mock HTTP requests were made.
         eq_(['http://www.feedbooks.com/book/677.epub',
-             'http://www.feedbooks.com/book/677.mobi',
-             'http://www.feedbooks.com/book/677.pdf',
              'http://covers.feedbooks.net/book/677.jpg?size=large&t=1428398185'],
             self.http.requests
         )
 
-        # Three 'books' were uploaded to the mock S3 service.
-        eq_(['http://s3.amazonaws.com/test.content.bucket/FeedBooks/URI/http%3A//www.feedbooks.com/book/677/Discourse%20on%20the%20Method.' + extension
-             for extension in 'epub', 'mobi', 'pdf'
-        ],
-            [x.mirror_url for x in self.mirror.uploaded]
+        # The EPUB was 'uploaded' to the mock S3 service and turned
+        # into a LicensePoolDeliveryMechanism. The other formats were
+        # ignored.
+        [mechanism] = pool.delivery_mechanisms
+        eq_('http://s3.amazonaws.com/test.content.bucket/FeedBooks/URI/http%3A//www.feedbooks.com/book/677/Discourse%20on%20the%20Method.epub',
+            mechanism.resource.representation.mirror_url
         )
-        eq_(
-            [u'application/epub+zip', 'application/x-mobipocket-ebook',
-             'application/pdf'],
-            [x.delivery_mechanism.content_type
-             for x in pool.delivery_mechanisms]
-        )            
+        eq_(u'application/epub+zip', mechanism.delivery_mechanism.content_type)
 
         # From information contained in the OPDS entry we determined
-        # all three links to be CC-BY-NC.
-        eq_([u'https://creativecommons.org/licenses/by-nc/4.0'] * 3,
-            [x.rights_status.uri for x in pool.delivery_mechanisms])
+        # the book's license to be CC-BY-NC.
+        eq_(u'https://creativecommons.org/licenses/by-nc/4.0',
+            mechanism.rights_status.uri)
 
-        # The pool is marked as open-access.
+        # The pool is marked as open-access, because it has an open-access
+        # delivery mechanism that was mirrored.
         eq_(True, pool.open_access)
         
     def test_in_copyright_book_not_mirrored(self):
@@ -246,22 +238,19 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # Nothing was uploaded to the mock S3.
         eq_([], self.mirror.uploaded)
 
-        # The LicensePool's delivery mechanisms are set appropriately
+        # The LicensePool's delivery mechanism is set appropriately
         # to reflect an in-copyright work.
-        eq_([RightsStatus.IN_COPYRIGHT]*3,
-            [x.rights_status.uri for x in pool.delivery_mechanisms])        
+        [mechanism] = pool.delivery_mechanisms
+        eq_(RightsStatus.IN_COPYRIGHT, mechanism.rights_status.uri)
 
-        # The DeliveryMechanisms are set as mirrored, but their 'mirror
+        # The DeliveryMechanism is set as mirrored, but its 'mirror
         # URL' is the same as the original URL. This is not the best
         # outcome--it happens in Identifier.add_link--but it should be
         # okay.
-        eq_(['http://www.feedbooks.com/book/677.epub',
-             'http://www.feedbooks.com/book/677.mobi',
-             'http://www.feedbooks.com/book/677.pdf'],
-            [x.resource.representation.mirror_url
-             for x in pool.delivery_mechanisms]
+        
+        eq_('http://www.feedbooks.com/book/677.epub',
+            mechanism.resource.representation.mirror_url
         )
-
         
         # The pool is not marked as open-access because although it
         # has open-access links, they're not licensed under terms we
