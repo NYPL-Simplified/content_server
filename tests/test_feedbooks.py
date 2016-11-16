@@ -1,3 +1,4 @@
+# encoding: utf-8
 import os
 from nose.tools import (
     eq_,
@@ -11,7 +12,8 @@ from ..feedbooks import (
 from ..core.model import (
     DataSource,
     Hyperlink,
-    RightsStatus
+    Representation,
+    RightsStatus,
 )
 from ..core.metadata_layer import (
     Metadata,
@@ -19,7 +21,10 @@ from ..core.metadata_layer import (
 )
 from ..core.opds import OPDSFeed
 from ..core.s3 import DummyS3Uploader
-from ..core.testing import DummyHTTPClient
+from ..core.testing import (
+    DummyHTTPClient,
+    DummyMetadataClient,
+)
 
 LIFE_PLUS_70 = "This work is available for countries where copyright is Life+70."
 
@@ -28,11 +33,16 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
     def setup(self):
         super(TestFeedbooksOPDSImporter, self).setup()
         self.http = DummyHTTPClient()
+        self.metadata = DummyMetadataClient()
+        self.mirror = DummyS3Uploader()
         self.importer = FeedbooksOPDSImporter(
-            self._db, http_get = self.http.do_get
+            self._db, http_get = self.http.do_get,
+            mirror=self.mirror,
+            metadata_client=self.metadata,
         )
         self.data_source = DataSource.lookup(
-            self._db, self.importer.DATA_SOURCE_NAME, autocreate=True
+            self._db, self.importer.DATA_SOURCE_NAME, autocreate=True,
+            offers_licenses=True
         )
         
         base_path = os.path.split(__file__)[0]
@@ -42,13 +52,6 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         path = os.path.join(self.resource_path, filename)
         data = open(path).read()
         return data
-
-    def test_rights_for_entry(self):
-        entry = dict(rights=LIFE_PLUS_70,
-                     source='gutenberg.net.au',
-                     publication_year="1922")
-        rights = self.importer.rights_for_entry(entry) 
-        eq_(RightsStatus.CC_BY_NC, rights)
 
     def test_extract_feed_data_improves_descriptions(self):
         feed = self.sample_file("feed.atom")
@@ -132,7 +135,140 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
 
         # Two HTTP requests were made.
         eq_(['http://foo/', 'http://baz/'], self.http.requests)
+
+    def test_generic_acquisition_link_picked_up_as_open_access(self):
+        """The OPDS feed has links with generic OPDS "acquisition"
+        relations. We know that these should be open-access relations,
+        and we modify the relations on the way in.
+        """
+        feed = self.sample_file("feed_with_open_access_book.atom")
+        imports, errors = self.importer.extract_feed_data(feed)
+        [book] = imports.values()
+        open_access_links = [x for x in book.circulation.links
+                             if x.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD]
+        links = sorted(x.href for x in open_access_links)
+        eq_(['http://www.feedbooks.com/book/677.epub',
+             'http://www.feedbooks.com/book/677.mobi',
+             'http://www.feedbooks.com/book/677.pdf'], links)
+
+    def test_open_access_book_mirrored(self):
+        feed = self.sample_file("feed_with_open_access_book.atom")
+        self.http.queue_response(
+            200, OPDSFeed.ACQUISITION_FEED_TYPE,
+            content=feed
+        )
+        self.metadata.lookups = { u"René Descartes" : "Descartes, Rene" }
+
+        # The request to
+        # http://covers.feedbooks.net/book/677.jpg?size=large&t=1428398185'
+        # will result in a 404 error, and the image will not be
+        # mirrored.
+        self.http.queue_response(404, media_type="text/plain")
+
+        # The requests to the various copies of the book will succeed,
+        # and the books will be mirrored.
+        self.http.queue_response(
+            200, content='I am 667.pdf',
+            media_type=Representation.PDF_MEDIA_TYPE,
+        )
+        self.http.queue_response(
+            200, content="I am 667.mobi",
+            media_type="application/x-mobipocket-ebook"
+        )
+        self.http.queue_response(
+            200, content='I am 667.epub',
+            media_type=Representation.EPUB_MEDIA_TYPE
+        )
+
+        [edition], [pool], [work], failures = self.importer.import_from_feed(
+            feed, immediately_presentation_ready=True,
+        )
+
+        eq_({}, failures)
+
+        # The work has been created and has metadata.
+        eq_("Discourse on the Method", work.title)
+        eq_(u'Ren\xe9 Descartes', work.author)
+
+        # Four mock HTTP requests were made.
+        eq_(['http://www.feedbooks.com/book/677.epub',
+             'http://www.feedbooks.com/book/677.mobi',
+             'http://www.feedbooks.com/book/677.pdf',
+             'http://covers.feedbooks.net/book/677.jpg?size=large&t=1428398185'],
+            self.http.requests
+        )
+
+        # Three 'books' were uploaded to the mock S3 service.
+        eq_(['http://s3.amazonaws.com/test.content.bucket/FeedBooks/URI/http%3A//www.feedbooks.com/book/677/Discourse%20on%20the%20Method.' + extension
+             for extension in 'epub', 'mobi', 'pdf'
+        ],
+            [x.mirror_url for x in self.mirror.uploaded]
+        )
+        eq_(
+            [u'application/epub+zip', 'application/x-mobipocket-ebook',
+             'application/pdf'],
+            [x.delivery_mechanism.content_type
+             for x in pool.delivery_mechanisms]
+        )            
+
+        # From information contained in the OPDS entry we determined
+        # all three links to be CC-BY-NC.
+        eq_([u'https://creativecommons.org/licenses/by-nc/4.0'] * 3,
+            [x.rights_status.uri for x in pool.delivery_mechanisms])
+
+        # The pool is marked as open-access.
+        eq_(True, pool.open_access)
         
+    def test_in_copyright_book_not_mirrored(self):
+
+        self.metadata.lookups = { u"René Descartes" : "Descartes, Rene" }
+        feed = self.sample_file("feed_with_in_copyright_book.atom")
+        self.http.queue_response(
+            200, OPDSFeed.ACQUISITION_FEED_TYPE,
+            content=feed
+        )
+
+        response = self.importer.import_from_feed(
+            feed, immediately_presentation_ready=True,
+        )
+
+        [edition], [pool], [work], failures = self.importer.import_from_feed(
+            feed, immediately_presentation_ready=True,
+        )
+
+        # The work has been created and has metadata.
+        eq_("Discourse on the Method", work.title)
+        eq_(u'Ren\xe9 Descartes', work.author)
+
+        # No mock HTTP requests were made.
+        eq_([], self.http.requests)
+
+        # Nothing was uploaded to the mock S3.
+        eq_([], self.mirror.uploaded)
+
+        # The LicensePool's delivery mechanisms are set appropriately
+        # to reflect an in-copyright work.
+        eq_([RightsStatus.IN_COPYRIGHT]*3,
+            [x.rights_status.uri for x in pool.delivery_mechanisms])        
+
+        # The DeliveryMechanisms are set as mirrored, but their 'mirror
+        # URL' is the same as the original URL. This is not the best
+        # outcome--it happens in Identifier.add_link--but it should be
+        # okay.
+        eq_(['http://www.feedbooks.com/book/677.epub',
+             'http://www.feedbooks.com/book/677.mobi',
+             'http://www.feedbooks.com/book/677.pdf'],
+            [x.resource.representation.mirror_url
+             for x in pool.delivery_mechanisms]
+        )
+
+        
+        # The pool is not marked as open-access because although it
+        # has open-access links, they're not licensed under terms we
+        # can use.
+        eq_(False, pool.open_access)
+
+
 class TestRehostingPolicy(object):
     
     def test_rights_uri(self):
@@ -145,6 +281,11 @@ class TestRehostingPolicy(object):
         )
         eq_(RightsStatus.IN_COPYRIGHT, pd_in_australia_only)
 
+        unknown_australia_publication = RehostingPolicy.rights_uri(
+            LIFE_PLUS_70, "gutenberg.net.au", None
+        )
+        eq_(RightsStatus.IN_COPYRIGHT, unknown_australia_publication)
+        
         # A Feedbooks work based on a text that is in the US public
         # domain is relicensed to us as CC-BY-NC.
         pd_in_us = RehostingPolicy.rights_uri(
@@ -160,6 +301,16 @@ class TestRehostingPolicy(object):
         )
         eq_(RightsStatus.CC_BY_SA, sharealike)
 
+        # A Feedbooks work based on a text whose rights status cannot
+        # be determined gets an unknown RightsStatus. We will not be
+        # hosting this book, but we might change our minds after
+        # investigating.
+        unknown = RehostingPolicy.rights_uri(
+            RehostingPolicy.RIGHTS_UNKNOWN, "mywebsite.com", 2016
+        )
+        eq_(RightsStatus.UNKNOWN, unknown)
+        
+        
     def test_can_rehost_us(self):
         # We will rehost anything published prior to 1923.
         eq_(
@@ -194,5 +345,14 @@ class TestRehostingPolicy(object):
         eq_(
             False, RehostingPolicy.can_rehost_us(
                 LIFE_PLUS_70, "gutenberg.net.au", 1930
+            )
+        )
+
+        # If a book would require manual work to determine copyright
+        # status, we will distinguish slightly between that case and
+        # the case where we're pretty sure.
+        eq_(
+            None, RehostingPolicy.can_rehost_us(
+                RehostingPolicy.RIGHTS_UNKNOWN, "Some random website", 2016
             )
         )
