@@ -21,15 +21,15 @@ from ..gutenberg import (
     GutenbergAPI,
     GutenbergRDFExtractor,
 )
-from . import DatabaseTest
+from . import (
+    DatabaseTest,
+    sample_data,
+)
 
 class TestGutenbergMetadataExtractor(DatabaseTest):
 
     def sample_data(self, filename):
-        base_path = os.path.split(__file__)[0]
-        resource_path = os.path.join(base_path, "files", "gutenberg")
-        path = os.path.join(resource_path, filename)
-        return open(path).read()
+        return sample_data(filename, "gutenberg")
 
     def test_rdf_parser(self):
         """Parse RDF into a Edition."""

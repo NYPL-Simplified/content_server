@@ -5,6 +5,8 @@ from nose.tools import (
 import StringIO
 import os
 
+from . import sample_data
+
 from ..marc import MARCExtractor
 from ..core.model import (
     Edition,
@@ -14,10 +16,7 @@ from ..core.model import (
 class TestMARCExtractor(object):
     
     def sample_data(self, filename):
-        base_path = os.path.split(__file__)[0]
-        resource_path = os.path.join(base_path, "files", "marc")
-        path = os.path.join(resource_path, filename)
-        return open(path)
+        return sample_data(filename, "marc")
 
     def test_parser(self):
         """Parse a MARC file into Metadata objects."""
