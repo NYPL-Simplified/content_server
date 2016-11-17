@@ -122,7 +122,6 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
             # processing them until we get a good description.
 
             # Fetch the alternate entry.
-            print alternate_link.href
             representation, is_new = Representation.get(
                 self._db, alternate_link.href, max_age=self.THIRTY_DAYS,
                 do_get=self.http_get
