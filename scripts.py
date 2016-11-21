@@ -240,6 +240,13 @@ class StaticFeedScript(Script):
     def header_to_path(cls, header):
         return [name.strip() for name in header.split('>')]
 
+    @classmethod
+    def category_paths(cls, csv_reader):
+        return filter(
+            lambda h: h.lower() not in cls.NONLANE_HEADERS,
+            csv_reader.fieldnames
+        )
+
 
 class StaticFeedCSVExportScript(StaticFeedScript):
 
@@ -516,10 +523,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             # TODO: Import from YAML as well.
             if genre_file.endswith('.csv'):
                 reader = csv.DictReader(f)
-                category_paths = filter(
-                    lambda h: h.lower() not in self.NONLANE_HEADERS,
-                    reader.fieldnames
-                )
+                category_paths = self.category_paths(reader)
                 if not category_paths:
                     # The source CSV didn't have any categories,
                     # just basic headers.
@@ -714,10 +718,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             reader = csv.DictReader(f)
 
             # Initialize all headers that identify a categorized lane.
-            lane_headers = filter(
-                lambda h: h.lower() not in self.NONLANE_HEADERS,
-                reader.fieldnames
-            )
+            lane_headers = self.category_paths(reader)
             [lanes[unicode(header)] for header in lane_headers]
 
             # Sort identifiers into their intended lane.
