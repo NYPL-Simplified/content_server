@@ -421,8 +421,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             if not parser.append:
                 writer.writeheader()
-            for row in rows:
-                writer.writerow(row)
+            writer.writerows(rows)
 
     def create_row_data(self, base_query, source_file):
         genre_nodes = self.get_base_genres(source_file)
