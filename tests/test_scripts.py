@@ -26,14 +26,14 @@ from ..core.s3 import DummyS3Uploader
 
 from ..lanes import IdentifiersLane
 from ..opds import StaticFeedAnnotator
-from ..scripts import CustomOPDSFeedGenerationScript
+from ..scripts import StaticFeedGenerationScript
 
-class TestCustomOPDSFeedGenerationScript(DatabaseTest):
+class TestStaticFeedGenerationScript(DatabaseTest):
 
     def setup(self):
-        super(TestCustomOPDSFeedGenerationScript, self).setup()
+        super(TestStaticFeedGenerationScript, self).setup()
         self.uploader = DummyS3Uploader()
-        self.script = CustomOPDSFeedGenerationScript(_db=self._db)
+        self.script = StaticFeedGenerationScript(_db=self._db)
 
     def test_run_with_urns(self):
         not_requested = self._work(with_open_access_download=True)

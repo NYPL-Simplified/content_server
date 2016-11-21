@@ -24,6 +24,7 @@ from core.model import (
     DataSource,
     DeliveryMechanism,
     Edition,
+    Genre,
     get_one,
     get_one_or_create,
     Hyperlink,
@@ -33,12 +34,16 @@ from core.model import (
     Resource,
     RightsStatus,
     Work,
+    WorkGenre,
 )
 from core.monitor import PresentationReadyMonitor
 from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
 from core.external_search import ExternalSearchIndex
-from core.util import fast_query_count
+from core.util import (
+    fast_query_count,
+    LanguageCodes,
+)
 
 from coverage import GutenbergEPUBCoverageProvider
 from lanes import (
@@ -315,7 +320,232 @@ class CSVExportScript(Script):
             rows.append(row_data)
         return rows
 
-class CustomOPDSFeedGenerationScript(Script):
+    def get_additional_fieldnames(self, rows, existing):
+        """Returns any fieldnames in the rows that are not included in
+        basic work data fieldnames.
+        """
+        fieldnames = list()
+        [fieldnames.extend(r.keys()) for r in rows]
+        new = set(fieldnames).difference(existing)
+        return sorted(new)
+
+
+class StaticFeedScript(Script):
+
+    # Identifies csv headers that are not considered titles for lanes.
+    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub']
+
+    @classmethod
+    def header_to_path(cls, header):
+        return [name.strip() for name in header.split('>')]
+
+class StaticFeedCSVExportScript(CSVExportScript, StaticFeedScript):
+
+    class GenreNode(object):
+
+        @classmethod
+        def head(cls):
+            return cls('Main')
+
+        def __init__(self, name, parent=None, children=None):
+            self.name = unicode(name)
+            self.set_parent(parent)
+            self._children = children or []
+
+        @property
+        def parent(self):
+            return self._parent
+
+        @property
+        def children(self):
+            return self._children
+
+        @property
+        def path(self):
+            if self.name == 'Main':
+                return None
+
+            nodes = list()
+            current_node = self
+            while current_node.parent:
+                nodes.insert(0, current_node)
+                current_node = current_node.parent
+            return nodes
+
+        @property
+        def siblings(self):
+            if not self.parent:
+                return []
+            return filter(lambda c: c.name!=self.name, self.parent.children)
+
+        @property
+        def default_sibling(self):
+            if self.default:
+                return self
+            default_sibling = [s for s in self.siblings if s.default]
+            if default_sibling:
+                return default_sibling[0]
+
+        def __str__(self):
+            if self.name == 'Main':
+                return ''
+
+            nodes = list()
+            current_node = self
+            while current_node.parent:
+                nodes.insert(0, current_node.name)
+                current_node = current_node.parent
+            return '>'.join(nodes)
+
+        def set_parent(self, parent):
+            self._parent = parent
+            if parent:
+                parent.add_child(self)
+            self.set_default()
+
+        def set_default(self):
+            self.default = False
+            if (not self.default_sibling and
+                ((self.name=='Fiction' and not self.parent.name=='Main')
+                or self.name.startswith('General'))):
+                self.default = True
+
+        def add_child(self, child):
+            existing_children = [c.name for c in self.children]
+            if not child.name in existing_children:
+                self._children.append(child)
+
+        def add_path(self, branch_list):
+            current = self
+            while branch_list:
+                new_node_name = branch_list.pop(0)
+
+                existing = filter(lambda c: c.name==new_node_name, current.children)
+                if existing:
+                    current = existing[0]
+                else:
+                    new = type(self)(new_node_name, parent=current)
+                    current = new
+
+    FICTIONALITY = ['fiction', 'nonfiction']
+
+    LANGUAGES = [l['name'].lower() for l in LanguageCodes.NATIVE_NAMES_RAW_DATA]
+
+    @classmethod
+    def arg_parser(cls):
+        parser = CSVExportScript.arg_parser()
+        parser.add_argument(
+            'source_file', help='Existing CSV file or YAML list with categories'
+        )
+        return parser
+
+    def create_row_data(self, base_query):
+        genre_nodes = self.get_base_genres()
+        filter_nodes = [n for n in genre_nodes if not n.default]
+        default_nodes = [n for n in genre_nodes if n.default]
+
+        works_by_genre_node = dict()
+        for genre_node in filter_nodes:
+            path = genre_node.path
+            if not path:
+                continue
+
+            # Apply genre criteria to the base query, going from parent
+            # to base node, assuming increasing specificity.
+            genre_node_qu = base_query
+            for node in path:
+                genre_node_qu = self.apply_node(node, genre_node_qu)
+            works_by_genre_node[genre_node] = genre_node_qu
+
+        for genre_node in default_nodes:
+            # Default nodes are catchall lanes like "General Fiction".
+            path = genre_node.path
+            genre_node_qu = base_query
+            for node in path[:-1]:
+                # Apply all but the final path, which could be something
+                # like "General Fiction" or "Nonfiction".
+                genre_node_qu = self.apply_node(node, genre_node_qu)
+
+            if path[-1].name in self.FICTIONALITY:
+                # Apply path criteria if it is related to fictionality.
+                genre_node_qu = self.apply_node(path[-1], genre_node_qu)
+
+            if genre_node.siblings:
+                # Remove any works included in sibling nodes.
+                sibling_queries = [qu for node, qu in works_by_genre_node.items()
+                                   if node in genre_node.siblings]
+                placed_works_qu = sibling_queries[0].union(*sibling_queries[1:])
+                subquery = placed_works_qu.subquery()
+                genre_node_qu = genre_node_qu.\
+                    outerjoin(subquery, Work.id==subquery.c.works_id).\
+                    filter(subquery.c.works_id==None)
+                works_by_genre_node[genre_node] = genre_node_qu
+
+        rows = list()
+        for node, works_query in works_by_genre_node.items():
+            for work, identifier, url in works_query:
+                row_data = dict(
+                    urn=identifier.urn.encode('utf-8'),
+                    title=work.title.encode('utf-8'),
+                    author=work.author.encode('utf-8'),
+                    download_url=url.encode('utf-8')
+                )
+                row_data[str(node)] = 'x'
+                rows.append(row_data)
+        return rows
+
+    def apply_node(self, node, qu):
+        if node.name in self.LANGUAGES:
+            return self.apply_language(qu, node.name)
+        elif node.name.lower() in self.FICTIONALITY:
+            return self.apply_fiction_status(qu, node.name)
+        else:
+            return qu.join(Work.work_genres).join(WorkGenre.genre).\
+                filter(Genre.name==node.name)
+
+    def apply_language(self, qu, language):
+        code = LanguageCodes.english_names_to_three(language.lower())
+        qu = qu.join(Work.presentation_edition).filter(Edition.language==code)
+        return qu
+
+    def apply_fiction_status(self, qu, fiction_status):
+        if 'non' in fiction_status.lower():
+            return qu.filter(Work.fiction==False)
+        else:
+            return qu.filter(Work.fiction==True)
+
+    def get_base_genres(self):
+        parser = self.arg_parser().parse_args()
+        genre_file = os.path.abspath(parser.source_file)
+        if not os.path.isfile(genre_file):
+            raise ValueError("Category file %s not found." % genre_file)
+
+        genre_tree = self.GenreNode.head()
+
+        with open(genre_file) as f:
+            # TODO: Import from YAML as well.
+            if genre_file.endswith('.csv'):
+                reader = csv.DictReader(f)
+                category_paths = filter(
+                    lambda h: h.lower() not in self.NONLANE_HEADERS,
+                    reader.fieldnames
+                )
+
+                for path in category_paths:
+                    path = self.header_to_path(path)
+                    genre_tree.add_path(path)
+
+        def find_base_nodes(genre_node):
+            if not genre_node.children:
+                yield genre_node
+            else:
+                for child in genre_node.children:
+                    for n in find_base_nodes(child):
+                        yield n
+        return list(find_base_nodes(genre_tree))
+
+
+class StaticFeedGenerationScript(StaticFeedScript):
 
     # Feeds ordered by this facet will be considered the default.
     DEFAULT_ORDER = Facets.ORDER_TITLE
@@ -335,9 +565,6 @@ class CustomOPDSFeedGenerationScript(Script):
     # Static feeds are refreshed each time they're created, so this
     # type is primarily just to distinguish them in the database.
     CACHE_TYPE = u'static'
-
-    # Identifies csv headers that are not considered titles for lanes.
-    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub']
 
     @classmethod
     def arg_parser(cls):
@@ -516,7 +743,7 @@ class CustomOPDSFeedGenerationScript(Script):
             if not identifiers:
                 # This lane has no Works and can be ignored.
                 continue
-            lane_path = [name.strip() for name in lane_header.split('>')]
+            lane_path = self.header_to_path(lane_header)
             base_lane = IdentifiersLane(self._db, identifiers, lane_path[-1])
             lanes_with_works.append(base_lane)
 
