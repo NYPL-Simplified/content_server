@@ -230,105 +230,6 @@ class DirectoryImportScript(Script):
             work.set_presentation_ready()
             self._db.commit()
 
-class CSVExportScript(Script):
-
-    """Exports the primary identifier, title, author, and download URL
-    for all of the works from a particular DataSource or DataSources
-    to a CSV file format.
-    """
-
-    @classmethod
-    def arg_parser(cls):
-        parser = argparse.ArgumentParser(conflict_handler='resolve')
-        parser.add_argument(
-            '-o', '--output_file', default='output.csv',
-            help='New or existing filename for the output CSV file.'
-        )
-        parser.add_argument(
-            '-d', '--datasources', nargs='+',
-            help='A specific source whose Works should be exported.'
-        )
-        parser.add_argument(
-            '-a', '--append', action='store_true',
-            help='Append new results to existing file.'
-        )
-        return parser
-
-    def do_run(self):
-        parser = self.arg_parser().parse_args()
-
-        # Verify the requested DataSources exists.
-        source_names = parser.datasources
-        for name in source_names:
-            source = DataSource.lookup(self._db, name)
-            if not source:
-                raise ValueError('DataSource "%s" could not be found.', name)
-
-        # Get all Works from the DataSources.
-        works = self._db.query(Work, Identifier, Resource.url)
-        works = works.options(lazyload(Work.license_pools))
-        works = works.join(Work.license_pools).join(LicensePool.data_source).\
-                join(LicensePool.links).join(LicensePool.identifier).\
-                join(Hyperlink.resource).filter(
-                    DataSource.name.in_(source_names),
-                    Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
-                    Resource.url.like(u'%.epub')
-                )
-
-        self.log.info(
-            'Exporting data for %d Works from DataSources: %s',
-            fast_query_count(works), ','.join(source_names)
-        )
-
-        # Transform the works into very basic CSV data for review.
-        rows = self.create_row_data(works)
-
-        # List the works in alphabetical order by title.
-        compare = lambda a,b: cmp(a['title'].lower(), b['title'].lower())
-        rows.sort(cmp=compare)
-
-        # Find or create a CSV file in the main app directory.
-        filename = parser.output_file
-        if not filename.lower().endswith('.csv'):
-            filename += '.csv'
-        filename = os.path.abspath(filename)
-
-        # Determine whether to append new rows or write over an existing file.
-        open_method = 'w'
-        if parser.append:
-            open_method = 'a'
-
-        with open(filename, open_method) as f:
-            fieldnames=['urn', 'title', 'author', 'download_url']
-            genre_fieldnames = self.get_additional_fieldnames(rows, fieldnames)
-            fieldnames.extend(genre_fieldnames)
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if not parser.append:
-                writer.writeheader()
-            for row in rows:
-                writer.writerow(row)
-
-    def create_row_data(self, works_results):
-        rows = list()
-        for work, identifier, url in works_results:
-            row_data = dict(
-                urn=identifier.urn.encode('utf-8'),
-                title=work.title.encode('utf-8'),
-                author=work.author.encode('utf-8'),
-                download_url=url.encode('utf-8')
-            )
-            rows.append(row_data)
-        return rows
-
-    def get_additional_fieldnames(self, rows, existing):
-        """Returns any fieldnames in the rows that are not included in
-        basic work data fieldnames.
-        """
-        fieldnames = list()
-        [fieldnames.extend(r.keys()) for r in rows]
-        new = set(fieldnames).difference(existing)
-        return sorted(new)
-
 
 class StaticFeedScript(Script):
 
@@ -339,7 +240,17 @@ class StaticFeedScript(Script):
     def header_to_path(cls, header):
         return [name.strip() for name in header.split('>')]
 
-class StaticFeedCSVExportScript(CSVExportScript, StaticFeedScript):
+
+class StaticFeedCSVExportScript(StaticFeedScript):
+
+    """Exports the primary identifier, title, author, and download URL
+    for all of the works from a particular DataSource or DataSources
+    to a CSV file format.
+
+    If requested categories are passed in via an existing CSV, this
+    script will add headers to represent those categories, in a proper
+    format for StaticFeedGenerationScript.
+    """
 
     class GenreNode(object):
 
@@ -433,18 +344,91 @@ class StaticFeedCSVExportScript(CSVExportScript, StaticFeedScript):
 
     @classmethod
     def arg_parser(cls):
-        parser = CSVExportScript.arg_parser()
+        parser = argparse.ArgumentParser()
         parser.add_argument(
-            'source_file', help='Existing CSV file or YAML list with categories'
+            '-s', '--source_file',
+            help='Existing CSV file or YAML list with categories'
+        )
+        parser.add_argument(
+            '-o', '--output-file', default='output.csv',
+            help='New or existing filename for the output CSV file.'
+        )
+        parser.add_argument(
+            '-d', '--datasources', nargs='+',
+            help='A specific source whose Works should be exported.'
+        )
+        parser.add_argument(
+            '-a', '--append', action='store_true',
+            help='Append new results to existing file.'
         )
         return parser
 
-    def create_row_data(self, base_query):
-        genre_nodes = self.get_base_genres()
+    def do_run(self):
+        parser = self.arg_parser().parse_args()
+
+        # Verify the requested DataSources exists.
+        source_names = parser.datasources
+        for name in source_names:
+            source = DataSource.lookup(self._db, name)
+            if not source:
+                raise ValueError('DataSource "%s" could not be found.', name)
+
+        # Get all Works from the DataSources.
+        works = self._db.query(Work, Identifier, Resource.url).\
+            options(lazyload(Work.license_pools)).\
+            join(Work.license_pools).join(LicensePool.data_source).\
+            join(LicensePool.links).join(LicensePool.identifier).\
+            join(Hyperlink.resource).filter(
+                DataSource.name.in_(source_names),
+                Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
+                Resource.url.like(u'%.epub')
+            )
+
+        self.log.info(
+            'Exporting data for %d Works from DataSources: %s',
+            fast_query_count(works), ','.join(source_names)
+        )
+
+        # Transform the works into CSV data for review.
+        rows = list(self.create_row_data(works, parser.source_file))
+
+        # List the works in alphabetical order by title.
+        compare = lambda a,b: cmp(a['title'].lower(), b['title'].lower())
+        rows.sort(cmp=compare)
+
+        # Find or create a CSV file in the main app directory.
+        filename = parser.output_file
+        if not filename.lower().endswith('.csv'):
+            filename += '.csv'
+        filename = os.path.abspath(filename)
+
+        # Determine whether to append new rows or write over an existing file.
+        open_method = 'w'
+        if parser.append:
+            open_method = 'a'
+
+        with open(filename, open_method) as f:
+            fieldnames=['urn', 'title', 'author', 'download_url']
+            genre_fieldnames = self.get_additional_fieldnames(rows, fieldnames)
+            fieldnames.extend(genre_fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not parser.append:
+                writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+
+    def create_row_data(self, base_query, source_file):
+        genre_nodes = self.get_base_genres(source_file)
+        if not genre_nodes:
+            # There's no desire for categorized works.
+            for item in base_query:
+                yield self.basic_work_row_data(*item)
+            return
+
+        works_by_genre_node = dict()
         filter_nodes = [n for n in genre_nodes if not n.default]
         default_nodes = [n for n in genre_nodes if n.default]
 
-        works_by_genre_node = dict()
         for genre_node in filter_nodes:
             path = genre_node.path
             if not path:
@@ -459,6 +443,9 @@ class StaticFeedCSVExportScript(CSVExportScript, StaticFeedScript):
 
         for genre_node in default_nodes:
             # Default nodes are catchall lanes like "General Fiction".
+            # Because they don't necessarily represent specific genres,
+            # they consist of whichever works are left over that also
+            # abide by their parent categories.
             path = genre_node.path
             genre_node_qu = base_query
             for node in path[:-1]:
@@ -481,18 +468,19 @@ class StaticFeedCSVExportScript(CSVExportScript, StaticFeedScript):
                     filter(subquery.c.works_id==None)
                 works_by_genre_node[genre_node] = genre_node_qu
 
-        rows = list()
         for node, works_query in works_by_genre_node.items():
             for work, identifier, url in works_query:
-                row_data = dict(
-                    urn=identifier.urn.encode('utf-8'),
-                    title=work.title.encode('utf-8'),
-                    author=work.author.encode('utf-8'),
-                    download_url=url.encode('utf-8')
-                )
-                row_data[str(node)] = 'x'
-                rows.append(row_data)
-        return rows
+                row_data = self.basic_work_row_data(work, identifier, url)
+                row_data[str(node)] = 'x'.encode('utf-8')
+                yield row_data
+
+    def basic_work_row_data(self, work, identifier, url):
+        return dict(
+            urn=identifier.urn.encode('utf-8'),
+            title=work.title.encode('utf-8'),
+            author=work.author.encode('utf-8'),
+            download_url=url.encode('utf-8')
+        )
 
     def apply_node(self, node, qu):
         if node.name in self.LANGUAGES:
@@ -514,9 +502,11 @@ class StaticFeedCSVExportScript(CSVExportScript, StaticFeedScript):
         else:
             return qu.filter(Work.fiction==True)
 
-    def get_base_genres(self):
-        parser = self.arg_parser().parse_args()
-        genre_file = os.path.abspath(parser.source_file)
+    def get_base_genres(self, source_file):
+        if not source_file:
+            return None
+
+        genre_file = os.path.abspath(source_file)
         if not os.path.isfile(genre_file):
             raise ValueError("Category file %s not found." % genre_file)
 
@@ -530,6 +520,10 @@ class StaticFeedCSVExportScript(CSVExportScript, StaticFeedScript):
                     lambda h: h.lower() not in self.NONLANE_HEADERS,
                     reader.fieldnames
                 )
+                if not category_paths:
+                    # The source CSV didn't have any categories,
+                    # just basic headers.
+                    return None
 
                 for path in category_paths:
                     path = self.header_to_path(path)
@@ -543,6 +537,15 @@ class StaticFeedCSVExportScript(CSVExportScript, StaticFeedScript):
                     for n in find_base_nodes(child):
                         yield n
         return list(find_base_nodes(genre_tree))
+
+    def get_additional_fieldnames(self, rows, existing):
+        """Returns any fieldnames in the rows that are not included in
+        basic work data fieldnames.
+        """
+        fieldnames = list()
+        [fieldnames.extend(r.keys()) for r in rows]
+        new = set(fieldnames).difference(existing)
+        return sorted(new)
 
 
 class StaticFeedGenerationScript(StaticFeedScript):
