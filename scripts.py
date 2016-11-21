@@ -234,13 +234,14 @@ class CSVExportScript(Script):
 
     @classmethod
     def arg_parser(cls):
-        parser = argparse.ArgumentParser()
+        parser = argparse.ArgumentParser(conflict_handler='resolve')
         parser.add_argument(
-            'data-source',
-            help='A specific source whose Works should be exported.'
+            '-o', '--output_file', default='output.csv',
+            help='New or existing filename for the output CSV file.'
         )
         parser.add_argument(
-            '-f', '--filename', help='Name for the output CSV file.'
+            '-d', '--datasources', nargs='+',
+            help='A specific source whose Works should be exported.'
         )
         parser.add_argument(
             '-a', '--append', action='store_true',
@@ -251,44 +252,38 @@ class CSVExportScript(Script):
     def do_run(self):
         parser = self.arg_parser().parse_args()
 
-        # Verify the requested DataSource exists.
-        source_name = parser.data_source
-        source = DataSource.lookup(self._db, source_name)
-        if not source:
-            raise ValueError('DataSource "%s" could not be found.', source_name)
+        # Verify the requested DataSources exists.
+        source_names = parser.datasources
+        for name in source_names:
+            source = DataSource.lookup(self._db, name)
+            if not source:
+                raise ValueError('DataSource "%s" could not be found.', name)
 
-        # Get all Works from the Source.
+        # Get all Works from the DataSources.
         works = self._db.query(Work, Identifier, Resource.url)
         works = works.options(lazyload(Work.license_pools))
         works = works.join(Work.license_pools).join(LicensePool.data_source).\
                 join(LicensePool.links).join(LicensePool.identifier).\
                 join(Hyperlink.resource).filter(
-                    DataSource.name==source_name,
+                    DataSource.name.in_(source_names),
                     Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
                     Resource.url.like(u'%.epub')
-                ).all()
+                )
 
         self.log.info(
-            'Exporting data for %d Works from %s', len(works), source_name
+            'Exporting data for %d Works from DataSources: %s',
+            fast_query_count(works), ','.join(source_names)
         )
 
         # Transform the works into very basic CSV data for review.
-        rows = list()
-        for work, identifier, url in works:
-            row_data = dict(
-                identifier=identifier.urn.encode('utf-8'),
-                title=work.title.encode('utf-8'),
-                author=work.author.encode('utf-8'),
-                download_url=url.encode('utf-8')
-            )
-            rows.append(row_data)
+        rows = self.create_row_data(works)
 
         # List the works in alphabetical order by title.
         compare = lambda a,b: cmp(a['title'].lower(), b['title'].lower())
         rows.sort(cmp=compare)
 
         # Find or create a CSV file in the main app directory.
-        filename = parser.filename
+        filename = parser.output_file
         if not filename.lower().endswith('.csv'):
             filename += '.csv'
         filename = os.path.abspath(filename)
@@ -299,13 +294,26 @@ class CSVExportScript(Script):
             open_method = 'a'
 
         with open(filename, open_method) as f:
-            fieldnames=['identifier', 'title', 'author', 'download_url']
+            fieldnames=['urn', 'title', 'author', 'download_url']
+            genre_fieldnames = self.get_additional_fieldnames(rows, fieldnames)
+            fieldnames.extend(genre_fieldnames)
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             if not parser.append:
                 writer.writeheader()
             for row in rows:
                 writer.writerow(row)
 
+    def create_row_data(self, works_results):
+        rows = list()
+        for work, identifier, url in works_results:
+            row_data = dict(
+                urn=identifier.urn.encode('utf-8'),
+                title=work.title.encode('utf-8'),
+                author=work.author.encode('utf-8'),
+                download_url=url.encode('utf-8')
+            )
+            rows.append(row_data)
+        return rows
 
 class CustomOPDSFeedGenerationScript(Script):
 
