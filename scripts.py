@@ -370,6 +370,14 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         )
         return parser
 
+    @property
+    def base_works_query(self):
+        """The base query for works, used externally for testing."""
+        return self._db.query(Work, Identifier, Resource.url).\
+            enable_eagerloads(False).join(Work.license_pools).\
+            join(LicensePool.data_source).join(LicensePool.links).\
+            join(LicensePool.identifier).join(Hyperlink.resource)
+
     def do_run(self):
         parser = self.arg_parser().parse_args()
 
@@ -381,15 +389,11 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                 raise ValueError('DataSource "%s" could not be found.', name)
 
         # Get all Works from the DataSources.
-        works_qu = self._db.query(Work, Identifier, Resource.url).\
-            options(lazyload(Work.license_pools)).\
-            join(Work.license_pools).join(LicensePool.data_source).\
-            join(LicensePool.links).join(LicensePool.identifier).\
-            join(Hyperlink.resource).filter(
-                DataSource.name.in_(source_names),
-                Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
-                Resource.url.like(u'%.epub')
-            )
+        works_qu = self.base_works_query.filter(
+            DataSource.name.in_(source_names),
+            Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
+            Resource.url.like(u'%.epub')
+        )
 
         self.log.info(
             'Exporting data for %d Works from DataSources: %s',
@@ -428,7 +432,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         rows.sort(cmp=compare)
 
         with open(filename, 'w') as f:
-            fieldnames=['urn', 'title', 'author', 'download_url']
+            fieldnames = self.NONLANE_HEADERS
             category_fieldnames = self.get_category_fieldnames(rows, fieldnames)
             fieldnames.extend(category_fieldnames)
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -455,10 +459,25 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             # Apply category criteria to the base query, going from parent
             # to base node, assuming increasing specificity.
             category_node_qu = base_query
-            for node in path:
+            for node in path[:-1]:
                 category_node_qu = self.apply_node(node, category_node_qu)
+            category_node_qu = self.apply_node(path[-1], category_node_qu, genre=True)
             works_by_category_node[category_node] = category_node_qu
 
+
+        def sort_key(default_node):
+            # Default lanes should be applied to remaining works
+            # according to the specificity of their parent class.
+            parent = default_node.parent.name
+            if parent.lower() in self.LANGUAGES:
+                return 3
+            if parent.lower() in self.FICTIONALITY:
+                return 2
+            else:
+                # The parent is a genre.
+                return 1
+
+        default_nodes = sorted(default_nodes, key=sort_key)
         for category_node in default_nodes:
             # Default nodes are catchall lanes like "General Fiction".
             # Because they don't necessarily represent specific genres,
@@ -466,25 +485,30 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             # abide by their parent categories.
             path = category_node.path
             category_node_qu = base_query
-            for node in path[:-1]:
+
+            for node in path[:-2]:
                 # Apply all but the final path, which could be something
                 # like "General Fiction" or "Nonfiction".
                 category_node_qu = self.apply_node(node, category_node_qu)
 
-            if path[-1].name in self.FICTIONALITY:
-                # Apply path criteria if it is related to fictionality.
-                category_node_qu = self.apply_node(path[-1], category_node_qu)
+            # Apply the parent node in cases where it may be a relevant
+            # may be a relevant genre, e.g. "Short Stories>General Fiction"
+            category_node_qu = self.apply_node(
+                category_node.parent, category_node_qu, genre=True
+            )
 
-            if category_node.siblings:
-                # Remove any works included in sibling nodes.
-                sibling_queries = [qu for node, qu in works_by_category_node.items()
-                                   if node in category_node.siblings]
-                placed_works_qu = sibling_queries[0].union(*sibling_queries[1:])
-                subquery = placed_works_qu.subquery()
-                category_node_qu = category_node_qu.\
-                    outerjoin(subquery, Work.id==subquery.c.works_id).\
-                    filter(subquery.c.works_id==None)
-                works_by_category_node[category_node] = category_node_qu
+            if category_node.name in self.FICTIONALITY:
+                # Apply path criteria if it is related to fictionality.
+                category_node_qu = self.apply_node(category_node, category_node_qu)
+
+            # Remove any works included in other queries.
+            existing_queries = works_by_category_node.values()
+            placed_works_qu = existing_queries[0].union(*existing_queries[1:])
+            subquery = placed_works_qu.subquery()
+            category_node_qu = category_node_qu.\
+                outerjoin(subquery, Work.id==subquery.c.works_id).\
+                filter(subquery.c.works_id==None)
+            works_by_category_node[category_node] = category_node_qu
 
         for node, works_query in works_by_category_node.items():
             for work, identifier, url in works_query:
@@ -497,17 +521,22 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             urn=identifier.urn.encode('utf-8'),
             title=work.title.encode('utf-8'),
             author=work.author.encode('utf-8'),
-            download_url=url.encode('utf-8')
+            epub=url.encode('utf-8')
         )
 
-    def apply_node(self, node, qu):
-        if node.name.lower() in self.LANGUAGES:
+    def apply_node(self, node, qu, genre=False):
+        if node.name == 'Main':
+            # This is the head of the CategoryNode tree. Ignore it.
+            return qu
+        elif node.name.lower() in self.LANGUAGES:
             return self.apply_language(qu, node.name)
         elif node.name.lower() in self.FICTIONALITY:
             return self.apply_fiction_status(qu, node.name)
-        else:
+        elif genre:
+            # Only apply genre filtering for particular CategoryNodes.
             return qu.join(Work.work_genres).join(WorkGenre.genre).\
                 filter(Genre.name==node.name)
+        return qu
 
     def apply_language(self, qu, language):
         code = LanguageCodes.english_names_to_three[language.lower()]

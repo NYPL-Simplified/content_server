@@ -38,6 +38,46 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         super(TestStaticFeedCSVExportScript, self).setup()
         self.script = StaticFeedCSVExportScript(_db=self._db)
 
+    def test_create_row_data(self):
+        # Create a buncha works with genres correlated to categories in
+        # tests/files/scripts/sample.csv.
+        romance = self._work(with_open_access_download=True, genre='Romance')
+        paranormal = self._work(with_open_access_download=True, genre='Paranormal Mystery')
+        scifi = self._work(with_open_access_download=True, genre='Science Fiction')
+        short = self._work(with_open_access_download=True, genre='Short Stories')
+        history = self._work(with_open_access_download=True, genre='History', fiction=False)
+
+        # When there are no categories, only basic work information is
+        # listed for all of the works.
+        row_data = list(self.script.create_row_data(
+            self.script.base_works_query, 'tests/files/scripts/laneless.csv'
+        ))
+        eq_(5, len(row_data))
+
+        # Only the basic work information headers are included.
+        all_headers = list()
+        [all_headers.extend(r.keys()) for r in row_data]
+        all_headers = set(all_headers)
+        eq_(sorted(self.script.NONLANE_HEADERS), sorted(all_headers))
+
+        # When there are categories, the rows get sorted into their places.
+        row_data = list(self.script.create_row_data(
+            self.script.base_works_query, 'tests/files/scripts/sample.csv'
+        ))
+        eq_(5, len(row_data))
+
+        def work_has_category_path(work, category_path):
+            urn = work.license_pools[0].identifier.urn
+            [row_datum] = [r for r in row_data if r['urn']==urn]
+            assert row_datum.get(category_path)
+
+        work_has_category_path(romance, 'Fiction>General Fiction')
+        work_has_category_path(paranormal, 'Fiction>Horror>Paranormal Mystery')
+        work_has_category_path(scifi, 'Fiction>Science Fiction')
+        work_has_category_path(short, 'Short Stories>General Fiction')
+        work_has_category_path(history, 'Nonfiction')
+
+
     def test_apply_node(self):
         ignored_work = self._work(with_open_access_download=True)
         base_query = self._db.query(Work)
@@ -57,8 +97,18 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         # Nodes can be applied if they are a genre.
         node = self.script.CategoryNode('Science Fiction')
         scifi = self._work(with_open_access_download=True, genre='Science Fiction')
-        result = self.script.apply_node(node, base_query)
+        result = self.script.apply_node(node, base_query, genre=True)
         eq_([scifi], result.all())
+
+        # A genre node isn't applied without clearance.
+        node = self.script.CategoryNode('Science Fiction')
+        result = self.script.apply_node(node, base_query)
+        eq_(base_query.all(), result.all())
+
+        # A head node isn't applied.
+        node = self.script.CategoryNode('Main')
+        result = self.script.apply_node(node, base_query)
+        eq_(base_query.all(), result.all())
 
 
 class TestStaticFeedGenerationScript(DatabaseTest):
@@ -269,8 +319,8 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         # Even more than 1!
         horror = sublane_by_name(fiction, 'Horror')
         eq_(3, len(horror.identifiers))
-        # And despite the fact that 'Fiction > Horror > Paranormal' is a
-        # category included in the example CSV file, it's not included
+        # And despite the fact that 'Fiction > Horror > Paranormal Mystery'
+        # is a category included in the example CSV file, it's not included
         # because it has no identifiers marked.
         eq_(0, len(horror.sublanes))
 
