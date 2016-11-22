@@ -1,5 +1,12 @@
 #!/usr/bin/env python
-"""Create a static OPDS feed from a list of identifiers"""
+"""Create a static OPDS feed from a list of identifiers submitted via CSV
+or stdin
+
+This example will import all of the URNs from input.csv and upload static
+feeds intended to be placed at 'https://ls.org/' to S3.
+
+bin/util/create_static_feed custom.csv --upload --domain "https://ls.org/"
+"""
 import sys
 from nose.tools import set_trace
 from os import path
@@ -8,5 +15,5 @@ bin_dir = path.split(__file__)[0]
 package_dir = path.join(bin_dir, '..', '..')
 sys.path.append(path.abspath(package_dir))
 
-from scripts import CustomOPDSFeedGenerationScript
-CustomOPDSFeedGenerationScript().run()
+from scripts import StaticFeedGenerationScript
+StaticFeedGenerationScript().run()

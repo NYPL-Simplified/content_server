@@ -26,7 +26,40 @@ from ..core.s3 import DummyS3Uploader
 
 from ..lanes import IdentifiersLane
 from ..opds import StaticFeedAnnotator
-from ..scripts import StaticFeedGenerationScript
+from ..scripts import (
+    StaticFeedCSVExportScript,
+    StaticFeedGenerationScript,
+)
+
+
+class TestStaticFeedCSVExportScript(DatabaseTest):
+
+    def setup(self):
+        super(TestStaticFeedCSVExportScript, self).setup()
+        self.script = StaticFeedCSVExportScript(_db=self._db)
+
+    def test_apply_node(self):
+        ignored_work = self._work(with_open_access_download=True)
+        base_query = self._db.query(Work)
+
+        # Nodes can be applied if they are a language.
+        node = self.script.CategoryNode('Spanish')
+        espanol = self._work(with_open_access_download=True, language='spa')
+        result = self.script.apply_node(node, base_query)
+        eq_([espanol], result.all())
+
+        # Nodes can be applied if they are 'Fiction' or 'Nonfiction'.
+        node = self.script.CategoryNode('Nonfiction')
+        nonfiction = self._work(with_open_access_download=True, fiction=False)
+        result = self.script.apply_node(node, base_query)
+        eq_([nonfiction], result.all())
+
+        # Nodes can be applied if they are a genre.
+        node = self.script.CategoryNode('Science Fiction')
+        scifi = self._work(with_open_access_download=True, genre='Science Fiction')
+        result = self.script.apply_node(node, base_query)
+        eq_([scifi], result.all())
+
 
 class TestStaticFeedGenerationScript(DatabaseTest):
 

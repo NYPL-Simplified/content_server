@@ -347,7 +347,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
     FICTIONALITY = ['fiction', 'nonfiction']
 
-    LANGUAGES = [l['name'].lower() for l in LanguageCodes.NATIVE_NAMES_RAW_DATA]
+    LANGUAGES = LanguageCodes.english_names_to_three.keys()
 
     @classmethod
     def arg_parser(cls):
@@ -381,7 +381,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                 raise ValueError('DataSource "%s" could not be found.', name)
 
         # Get all Works from the DataSources.
-        works = self._db.query(Work, Identifier, Resource.url).\
+        works_qu = self._db.query(Work, Identifier, Resource.url).\
             options(lazyload(Work.license_pools)).\
             join(Work.license_pools).join(LicensePool.data_source).\
             join(LicensePool.links).join(LicensePool.identifier).\
@@ -393,11 +393,11 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
         self.log.info(
             'Exporting data for %d Works from DataSources: %s',
-            fast_query_count(works), ','.join(source_names)
+            fast_query_count(works_qu), ','.join(source_names)
         )
 
         # Transform the works into CSV data for review.
-        rows = list(self.create_row_data(works, parser.source_file))
+        rows = list(self.create_row_data(works_qu, parser.source_file))
 
         # Find or create a CSV file in the main app directory.
         filename = parser.output_file
@@ -405,27 +405,28 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             filename += '.csv'
         filename = os.path.abspath(filename)
 
-        existing_rows = None
-        if parser.append:
-            if os.path.isfile(filename):
-                with open(filename) as f:
-                    existing_rows = [r for r in csv.DictReader(f)]
+        if parser.append and os.path.isfile(filename):
+            existing_rows = None
+            with open(filename) as f:
+                existing_rows = [r for r in csv.DictReader(f)]
 
-        if existing_rows:
-            # Existing rows may have been placed into different rows this
-            # time than they were before. Prefer newer categorizations
-            # over older ones.
-            existing_urns = set([r['urn'] for r in existing_rows])
-            new_urns = set([r['urn'] for r in rows])
-            overwritten_urns = existing_urns & new_urns
-            existing_rows = filter(
-                lambda r: r['urn'] not in overwritten_urns, existing_rows
-            )
-            rows.extend(existing_rows)
+            if existing_rows:
+                # Works that are already in the file may have been placed
+                # into different categories in the last run. Prefer newer
+                # categorizations over older ones.
+                existing_urns = set([r['urn'] for r in existing_rows])
+                new_urns = set([r['urn'] for r in rows])
+                overwritten_urns = existing_urns & new_urns
+                existing_rows = filter(
+                    lambda r: r['urn'] not in overwritten_urns,
+                    existing_rows
+                )
+                rows.extend(existing_rows)
 
         # List the works in alphabetical order by title.
         compare = lambda a,b: cmp(a['title'].lower(), b['title'].lower())
         rows.sort(cmp=compare)
+
         with open(filename, 'w') as f:
             fieldnames=['urn', 'title', 'author', 'download_url']
             category_fieldnames = self.get_category_fieldnames(rows, fieldnames)
@@ -500,7 +501,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         )
 
     def apply_node(self, node, qu):
-        if node.name in self.LANGUAGES:
+        if node.name.lower() in self.LANGUAGES:
             return self.apply_language(qu, node.name)
         elif node.name.lower() in self.FICTIONALITY:
             return self.apply_fiction_status(qu, node.name)
@@ -509,7 +510,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                 filter(Genre.name==node.name)
 
     def apply_language(self, qu, language):
-        code = LanguageCodes.english_names_to_three(language.lower())
+        code = LanguageCodes.english_names_to_three[language.lower()]
         qu = qu.join(Work.presentation_edition).filter(Edition.language==code)
         return qu
 
