@@ -259,7 +259,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
     format for StaticFeedGenerationScript.
     """
 
-    class GenreNode(object):
+    class CategoryNode(object):
 
         @classmethod
         def head(cls):
@@ -416,65 +416,65 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
         with open(filename, open_method) as f:
             fieldnames=['urn', 'title', 'author', 'download_url']
-            genre_fieldnames = self.get_additional_fieldnames(rows, fieldnames)
-            fieldnames.extend(genre_fieldnames)
+            category_fieldnames = self.get_category_fieldnames(rows, fieldnames)
+            fieldnames.extend(category_fieldnames)
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             if not parser.append:
                 writer.writeheader()
             writer.writerows(rows)
 
     def create_row_data(self, base_query, source_file):
-        genre_nodes = self.get_base_genres(source_file)
-        if not genre_nodes:
+        category_nodes = self.get_base_categories(source_file)
+        if not category_nodes:
             # There's no desire for categorized works.
             for item in base_query:
                 yield self.basic_work_row_data(*item)
             return
 
-        works_by_genre_node = dict()
-        filter_nodes = [n for n in genre_nodes if not n.default]
-        default_nodes = [n for n in genre_nodes if n.default]
+        works_by_category_node = dict()
+        filter_nodes = [n for n in category_nodes if not n.default]
+        default_nodes = [n for n in category_nodes if n.default]
 
-        for genre_node in filter_nodes:
-            path = genre_node.path
+        for category_node in filter_nodes:
+            path = category_node.path
             if not path:
                 continue
 
-            # Apply genre criteria to the base query, going from parent
+            # Apply category criteria to the base query, going from parent
             # to base node, assuming increasing specificity.
-            genre_node_qu = base_query
+            category_node_qu = base_query
             for node in path:
-                genre_node_qu = self.apply_node(node, genre_node_qu)
-            works_by_genre_node[genre_node] = genre_node_qu
+                category_node_qu = self.apply_node(node, category_node_qu)
+            works_by_category_node[category_node] = category_node_qu
 
-        for genre_node in default_nodes:
+        for category_node in default_nodes:
             # Default nodes are catchall lanes like "General Fiction".
             # Because they don't necessarily represent specific genres,
             # they consist of whichever works are left over that also
             # abide by their parent categories.
-            path = genre_node.path
-            genre_node_qu = base_query
+            path = category_node.path
+            category_node_qu = base_query
             for node in path[:-1]:
                 # Apply all but the final path, which could be something
                 # like "General Fiction" or "Nonfiction".
-                genre_node_qu = self.apply_node(node, genre_node_qu)
+                category_node_qu = self.apply_node(node, category_node_qu)
 
             if path[-1].name in self.FICTIONALITY:
                 # Apply path criteria if it is related to fictionality.
-                genre_node_qu = self.apply_node(path[-1], genre_node_qu)
+                category_node_qu = self.apply_node(path[-1], category_node_qu)
 
-            if genre_node.siblings:
+            if category_node.siblings:
                 # Remove any works included in sibling nodes.
-                sibling_queries = [qu for node, qu in works_by_genre_node.items()
-                                   if node in genre_node.siblings]
+                sibling_queries = [qu for node, qu in works_by_category_node.items()
+                                   if node in category_node.siblings]
                 placed_works_qu = sibling_queries[0].union(*sibling_queries[1:])
                 subquery = placed_works_qu.subquery()
-                genre_node_qu = genre_node_qu.\
+                category_node_qu = category_node_qu.\
                     outerjoin(subquery, Work.id==subquery.c.works_id).\
                     filter(subquery.c.works_id==None)
-                works_by_genre_node[genre_node] = genre_node_qu
+                works_by_category_node[category_node] = category_node_qu
 
-        for node, works_query in works_by_genre_node.items():
+        for node, works_query in works_by_category_node.items():
             for work, identifier, url in works_query:
                 row_data = self.basic_work_row_data(work, identifier, url)
                 row_data[str(node)] = 'x'.encode('utf-8')
@@ -508,19 +508,19 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         else:
             return qu.filter(Work.fiction==True)
 
-    def get_base_genres(self, source_file):
+    def get_base_categories(self, source_file):
         if not source_file:
             return None
 
-        genre_file = os.path.abspath(source_file)
-        if not os.path.isfile(genre_file):
-            raise ValueError("Category file %s not found." % genre_file)
+        category_file = os.path.abspath(source_file)
+        if not os.path.isfile(category_file):
+            raise ValueError("Category file %s not found." % category_file)
 
-        genre_tree = self.GenreNode.head()
+        category_tree = self.CategoryNode.head()
 
-        with open(genre_file) as f:
+        with open(category_file) as f:
             # TODO: Import from YAML as well.
-            if genre_file.endswith('.csv'):
+            if category_file.endswith('.csv'):
                 reader = csv.DictReader(f)
                 category_paths = self.category_paths(reader)
                 if not category_paths:
@@ -530,18 +530,18 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
                 for path in category_paths:
                     path = self.header_to_path(path)
-                    genre_tree.add_path(path)
+                    category_tree.add_path(path)
 
-        def find_base_nodes(genre_node):
-            if not genre_node.children:
-                yield genre_node
+        def find_base_nodes(category_node):
+            if not category_node.children:
+                yield category_node
             else:
-                for child in genre_node.children:
+                for child in category_node.children:
                     for n in find_base_nodes(child):
                         yield n
-        return list(find_base_nodes(genre_tree))
+        return list(find_base_nodes(category_tree))
 
-    def get_additional_fieldnames(self, rows, existing):
+    def get_category_fieldnames(self, rows, existing):
         """Returns any fieldnames in the rows that are not included in
         basic work data fieldnames.
         """
