@@ -24,6 +24,7 @@ from core.model import (
     DataSource,
     DeliveryMechanism,
     Edition,
+    Genre,
     get_one,
     get_one_or_create,
     Hyperlink,
@@ -33,12 +34,16 @@ from core.model import (
     Resource,
     RightsStatus,
     Work,
+    WorkGenre,
 )
 from core.monitor import PresentationReadyMonitor
 from core.opds import AcquisitionFeed
 from core.s3 import S3Uploader
 from core.external_search import ExternalSearchIndex
-from core.util import fast_query_count
+from core.util import (
+    fast_query_count,
+    LanguageCodes,
+)
 
 from coverage import GutenbergEPUBCoverageProvider
 from lanes import (
@@ -225,22 +230,139 @@ class DirectoryImportScript(Script):
             work.set_presentation_ready()
             self._db.commit()
 
-class CSVExportScript(Script):
+
+class StaticFeedScript(Script):
+
+    # Identifies csv headers that are not considered titles for lanes.
+    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub']
+
+    @classmethod
+    def header_to_path(cls, header):
+        return [name.strip() for name in header.split('>')]
+
+    @classmethod
+    def category_paths(cls, csv_reader):
+        return filter(
+            lambda h: h.lower() not in cls.NONLANE_HEADERS,
+            csv_reader.fieldnames
+        )
+
+
+class StaticFeedCSVExportScript(StaticFeedScript):
 
     """Exports the primary identifier, title, author, and download URL
     for all of the works from a particular DataSource or DataSources
     to a CSV file format.
+
+    If requested categories are passed in via an existing CSV, this
+    script will add headers to represent those categories, in a proper
+    format for StaticFeedGenerationScript.
     """
+
+    class CategoryNode(object):
+
+        @classmethod
+        def head(cls):
+            return cls('Main')
+
+        def __init__(self, name, parent=None, children=None):
+            self.name = unicode(name)
+            self.set_parent(parent)
+            self._children = children or []
+
+        @property
+        def parent(self):
+            return self._parent
+
+        @property
+        def children(self):
+            return self._children
+
+        @property
+        def path(self):
+            if self.name == 'Main':
+                return None
+
+            nodes = list()
+            current_node = self
+            while current_node.parent:
+                nodes.insert(0, current_node)
+                current_node = current_node.parent
+            return nodes
+
+        @property
+        def siblings(self):
+            if not self.parent:
+                return []
+            return filter(lambda c: c.name!=self.name, self.parent.children)
+
+        @property
+        def default_sibling(self):
+            if self.default:
+                return self
+            default_sibling = [s for s in self.siblings if s.default]
+            if default_sibling:
+                return default_sibling[0]
+
+        def __str__(self):
+            if self.name == 'Main':
+                return ''
+
+            nodes = list()
+            current_node = self
+            while current_node.parent:
+                nodes.insert(0, current_node.name)
+                current_node = current_node.parent
+            return '>'.join(nodes)
+
+        def set_parent(self, parent):
+            self._parent = parent
+            if parent:
+                parent.add_child(self)
+            self.set_default()
+
+        def set_default(self):
+            self.default = False
+            if (not self.default_sibling and
+                ((self.name=='Fiction' and not self.parent.name=='Main')
+                or self.name.startswith('General'))):
+                self.default = True
+
+        def add_child(self, child):
+            existing_children = [c.name for c in self.children]
+            if not child.name in existing_children:
+                self._children.append(child)
+
+        def add_path(self, branch_list):
+            current = self
+            while branch_list:
+                new_node_name = branch_list.pop(0)
+
+                existing = filter(lambda c: c.name==new_node_name, current.children)
+                if existing:
+                    current = existing[0]
+                else:
+                    new = type(self)(new_node_name, parent=current)
+                    current = new
+
+    FICTIONALITY = ['fiction', 'nonfiction']
+
+    LANGUAGES = LanguageCodes.english_names_to_three.keys()
 
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            'data-source',
-            help='A specific source whose Works should be exported.'
+            '-s', '--source-file',
+            help='Existing CSV file or YAML list with categories'
         )
         parser.add_argument(
-            '-f', '--filename', help='Name for the output CSV file.'
+            '-o', '--output-file', default='output.csv',
+            help='New or existing filename for the output CSV file.'
+        )
+        parser.add_argument(
+            '-d', '--datasources', nargs='+',
+            help='A specific source whose Works should be exported.'
         )
         parser.add_argument(
             '-a', '--append', action='store_true',
@@ -248,66 +370,229 @@ class CSVExportScript(Script):
         )
         return parser
 
+    @property
+    def base_works_query(self):
+        """The base query for works, used externally for testing."""
+        return self._db.query(Work, Identifier, Resource.url).\
+            enable_eagerloads(False).join(Work.license_pools).\
+            join(LicensePool.data_source).join(LicensePool.links).\
+            join(LicensePool.identifier).join(Hyperlink.resource)
+
     def do_run(self):
         parser = self.arg_parser().parse_args()
 
-        # Verify the requested DataSource exists.
-        source_name = parser.data_source
-        source = DataSource.lookup(self._db, source_name)
-        if not source:
-            raise ValueError('DataSource "%s" could not be found.', source_name)
+        # Verify the requested DataSources exists.
+        source_names = parser.datasources
+        for name in source_names:
+            source = DataSource.lookup(self._db, name)
+            if not source:
+                raise ValueError('DataSource "%s" could not be found.', name)
 
-        # Get all Works from the Source.
-        works = self._db.query(Work, Identifier, Resource.url)
-        works = works.options(lazyload(Work.license_pools))
-        works = works.join(Work.license_pools).join(LicensePool.data_source).\
-                join(LicensePool.links).join(LicensePool.identifier).\
-                join(Hyperlink.resource).filter(
-                    DataSource.name==source_name,
-                    Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
-                    Resource.url.like(u'%.epub')
-                ).all()
-
-        self.log.info(
-            'Exporting data for %d Works from %s', len(works), source_name
+        # Get all Works from the DataSources.
+        works_qu = self.base_works_query.filter(
+            DataSource.name.in_(source_names),
+            Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
+            Resource.url.like(u'%.epub')
         )
 
-        # Transform the works into very basic CSV data for review.
-        rows = list()
-        for work, identifier, url in works:
-            row_data = dict(
-                identifier=identifier.urn.encode('utf-8'),
-                title=work.title.encode('utf-8'),
-                author=work.author.encode('utf-8'),
-                download_url=url.encode('utf-8')
-            )
-            rows.append(row_data)
+        self.log.info(
+            'Exporting data for %d Works from DataSources: %s',
+            fast_query_count(works_qu), ','.join(source_names)
+        )
+
+        # Transform the works into CSV data for review.
+        rows = list(self.create_row_data(works_qu, parser.source_file))
+
+        # Find or create a CSV file in the main app directory.
+        filename = parser.output_file
+        if not filename.lower().endswith('.csv'):
+            filename += '.csv'
+        filename = os.path.abspath(filename)
+
+        if parser.append and os.path.isfile(filename):
+            existing_rows = None
+            with open(filename) as f:
+                existing_rows = [r for r in csv.DictReader(f)]
+
+            if existing_rows:
+                # Works that are already in the file may have been
+                # updated by a human since the last run. Prefer existing
+                # categorizations over newer server-generated ones.
+                existing_urns = set([r['urn'] for r in existing_rows])
+                new_urns = set([r['urn'] for r in rows])
+                overwritten_urns = existing_urns & new_urns
+                rows = filter(
+                    lambda r: r['urn'] not in overwritten_urns,
+                    rows
+                )
+                rows.extend(existing_rows)
 
         # List the works in alphabetical order by title.
         compare = lambda a,b: cmp(a['title'].lower(), b['title'].lower())
         rows.sort(cmp=compare)
 
-        # Find or create a CSV file in the main app directory.
-        filename = parser.filename
-        if not filename.lower().endswith('.csv'):
-            filename += '.csv'
-        filename = os.path.abspath(filename)
-
-        # Determine whether to append new rows or write over an existing file.
-        open_method = 'w'
-        if parser.append:
-            open_method = 'a'
-
-        with open(filename, open_method) as f:
-            fieldnames=['identifier', 'title', 'author', 'download_url']
+        with open(filename, 'w') as f:
+            fieldnames = self.NONLANE_HEADERS
+            category_fieldnames = self.get_category_fieldnames(rows, fieldnames)
+            fieldnames.extend(category_fieldnames)
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if not parser.append:
-                writer.writeheader()
-            for row in rows:
-                writer.writerow(row)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def create_row_data(self, base_query, source_file):
+        category_nodes = self.get_base_categories(source_file)
+        if not category_nodes:
+            # There's no desire for categorized works.
+            for item in base_query:
+                yield self.basic_work_row_data(*item)
+            return
+
+        works_by_category_node = dict()
+        filter_nodes = [n for n in category_nodes if not n.default]
+        default_nodes = [n for n in category_nodes if n.default]
+
+        for category_node in filter_nodes:
+            path = category_node.path
+            if not path:
+                continue
+
+            # Apply category criteria to the base query, going from parent
+            # to base node, assuming increasing specificity.
+            category_node_qu = base_query
+            for node in path[:-1]:
+                category_node_qu = self.apply_node(node, category_node_qu)
+            category_node_qu = self.apply_node(path[-1], category_node_qu, genre=True)
+            works_by_category_node[category_node] = category_node_qu
 
 
-class CustomOPDSFeedGenerationScript(Script):
+        def sort_key(default_node):
+            # Default lanes should be applied to remaining works
+            # according to the specificity of their parent class.
+            parent = default_node.parent.name
+            if parent.lower() in self.LANGUAGES:
+                return 3
+            if parent.lower() in self.FICTIONALITY:
+                return 2
+            else:
+                # The parent is a genre.
+                return 1
+
+        default_nodes = sorted(default_nodes, key=sort_key)
+        for category_node in default_nodes:
+            # Default nodes are catchall lanes like "General Fiction".
+            # Because they don't necessarily represent specific genres,
+            # they consist of whichever works are left over that also
+            # abide by their parent categories.
+            path = category_node.path
+            category_node_qu = base_query
+
+            for node in path[:-2]:
+                # Apply all but the final node, which could be something
+                # like "General Fiction" or "Nonfiction", and its parent.
+                category_node_qu = self.apply_node(node, category_node_qu)
+
+            # Apply the parent node in cases where it may be a relevant
+            # genre, e.g. "Short Stories>General Fiction"
+            category_node_qu = self.apply_node(
+                category_node.parent, category_node_qu, genre=True
+            )
+
+            if category_node.name in self.FICTIONALITY:
+                # Apply path criteria if it is related to fictionality.
+                category_node_qu = self.apply_node(category_node, category_node_qu)
+
+            # Remove any works included in other queries.
+            existing_queries = works_by_category_node.values()
+            placed_works_qu = existing_queries[0].union(*existing_queries[1:])
+            subquery = placed_works_qu.subquery()
+            category_node_qu = category_node_qu.\
+                outerjoin(subquery, Work.id==subquery.c.works_id).\
+                filter(subquery.c.works_id==None)
+            works_by_category_node[category_node] = category_node_qu
+
+        for node, works_query in works_by_category_node.items():
+            for work, identifier, url in works_query:
+                row_data = self.basic_work_row_data(work, identifier, url)
+                row_data[str(node)] = 'x'.encode('utf-8')
+                yield row_data
+
+    def basic_work_row_data(self, work, identifier, url):
+        return dict(
+            urn=identifier.urn.encode('utf-8'),
+            title=work.title.encode('utf-8'),
+            author=work.author.encode('utf-8'),
+            epub=url.encode('utf-8')
+        )
+
+    def apply_node(self, node, qu, genre=False):
+        if node.name == 'Main':
+            # This is the head of the CategoryNode tree. Ignore it.
+            return qu
+        elif node.name.lower() in self.LANGUAGES:
+            return self.apply_language(qu, node.name)
+        elif node.name.lower() in self.FICTIONALITY:
+            return self.apply_fiction_status(qu, node.name)
+        elif genre:
+            # Only apply genre filtering for particular CategoryNodes.
+            return qu.join(Work.work_genres).join(WorkGenre.genre).\
+                filter(Genre.name==node.name)
+        return qu
+
+    def apply_language(self, qu, language):
+        code = LanguageCodes.english_names_to_three[language.lower()]
+        qu = qu.join(Work.presentation_edition).filter(Edition.language==code)
+        return qu
+
+    def apply_fiction_status(self, qu, fiction_status):
+        if 'non' in fiction_status.lower():
+            return qu.filter(Work.fiction==False)
+        else:
+            return qu.filter(Work.fiction==True)
+
+    def get_base_categories(self, source_file):
+        if not source_file:
+            return None
+
+        category_file = os.path.abspath(source_file)
+        if not os.path.isfile(category_file):
+            raise ValueError("Category file %s not found." % category_file)
+
+        category_tree = self.CategoryNode.head()
+
+        with open(category_file) as f:
+            # TODO: Import from YAML as well.
+            if category_file.endswith('.csv'):
+                reader = csv.DictReader(f)
+                category_paths = self.category_paths(reader)
+                if not category_paths:
+                    # The source CSV didn't have any categories,
+                    # just basic headers.
+                    return None
+
+        for path in category_paths:
+            path = self.header_to_path(path)
+            category_tree.add_path(path)
+
+        def find_base_nodes(category_node):
+            if not category_node.children:
+                yield category_node
+            else:
+                for child in category_node.children:
+                    for n in find_base_nodes(child):
+                        yield n
+        return list(find_base_nodes(category_tree))
+
+    def get_category_fieldnames(self, rows, existing):
+        """Returns any fieldnames in the rows that are not included in
+        basic work data fieldnames.
+        """
+        fieldnames = list()
+        [fieldnames.extend(r.keys()) for r in rows]
+        new = set(fieldnames).difference(existing)
+        return sorted(new)
+
+
+class StaticFeedGenerationScript(StaticFeedScript):
 
     # Feeds ordered by this facet will be considered the default.
     DEFAULT_ORDER = Facets.ORDER_TITLE
@@ -327,9 +612,6 @@ class CustomOPDSFeedGenerationScript(Script):
     # Static feeds are refreshed each time they're created, so this
     # type is primarily just to distinguish them in the database.
     CACHE_TYPE = u'static'
-
-    # Identifies csv headers that are not considered titles for lanes.
-    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub']
 
     @classmethod
     def arg_parser(cls):
@@ -476,10 +758,7 @@ class CustomOPDSFeedGenerationScript(Script):
             reader = csv.DictReader(f)
 
             # Initialize all headers that identify a categorized lane.
-            lane_headers = filter(
-                lambda h: h.lower() not in self.NONLANE_HEADERS,
-                reader.fieldnames
-            )
+            lane_headers = self.category_paths(reader)
             [lanes[unicode(header)] for header in lane_headers]
 
             # Sort identifiers into their intended lane.
@@ -508,7 +787,7 @@ class CustomOPDSFeedGenerationScript(Script):
             if not identifiers:
                 # This lane has no Works and can be ignored.
                 continue
-            lane_path = [name.strip() for name in lane_header.split('>')]
+            lane_path = self.header_to_path(lane_header)
             base_lane = IdentifiersLane(self._db, identifiers, lane_path[-1])
             lanes_with_works.append(base_lane)
 
