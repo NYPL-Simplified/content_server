@@ -415,15 +415,15 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                 existing_rows = [r for r in csv.DictReader(f)]
 
             if existing_rows:
-                # Works that are already in the file may have been placed
-                # into different categories in the last run. Prefer newer
-                # categorizations over older ones.
+                # Works that are already in the file may have been
+                # updated by a human since the last run. Prefer existing
+                # categorizations over newer server-generated ones.
                 existing_urns = set([r['urn'] for r in existing_rows])
                 new_urns = set([r['urn'] for r in rows])
                 overwritten_urns = existing_urns & new_urns
-                existing_rows = filter(
+                rows = filter(
                     lambda r: r['urn'] not in overwritten_urns,
-                    existing_rows
+                    rows
                 )
                 rows.extend(existing_rows)
 
@@ -487,12 +487,12 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             category_node_qu = base_query
 
             for node in path[:-2]:
-                # Apply all but the final path, which could be something
-                # like "General Fiction" or "Nonfiction".
+                # Apply all but the final node, which could be something
+                # like "General Fiction" or "Nonfiction", and its parent.
                 category_node_qu = self.apply_node(node, category_node_qu)
 
             # Apply the parent node in cases where it may be a relevant
-            # may be a relevant genre, e.g. "Short Stories>General Fiction"
+            # genre, e.g. "Short Stories>General Fiction"
             category_node_qu = self.apply_node(
                 category_node.parent, category_node_qu, genre=True
             )
