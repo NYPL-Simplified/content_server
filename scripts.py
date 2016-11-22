@@ -353,7 +353,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            '-s', '--source_file',
+            '-s', '--source-file',
             help='Existing CSV file or YAML list with categories'
         )
         parser.add_argument(
@@ -399,28 +399,39 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         # Transform the works into CSV data for review.
         rows = list(self.create_row_data(works, parser.source_file))
 
-        # List the works in alphabetical order by title.
-        compare = lambda a,b: cmp(a['title'].lower(), b['title'].lower())
-        rows.sort(cmp=compare)
-
         # Find or create a CSV file in the main app directory.
         filename = parser.output_file
         if not filename.lower().endswith('.csv'):
             filename += '.csv'
         filename = os.path.abspath(filename)
 
-        # Determine whether to append new rows or write over an existing file.
-        open_method = 'w'
+        existing_rows = None
         if parser.append:
-            open_method = 'a'
+            if os.path.isfile(filename):
+                with open(filename) as f:
+                    existing_rows = [r for r in csv.DictReader(f)]
 
-        with open(filename, open_method) as f:
+        if existing_rows:
+            # Existing rows may have been placed into different rows this
+            # time than they were before. Prefer newer categorizations
+            # over older ones.
+            existing_urns = set([r['urn'] for r in existing_rows])
+            new_urns = set([r['urn'] for r in rows])
+            overwritten_urns = existing_urns & new_urns
+            existing_rows = filter(
+                lambda r: r['urn'] not in overwritten_urns, existing_rows
+            )
+            rows.extend(existing_rows)
+
+        # List the works in alphabetical order by title.
+        compare = lambda a,b: cmp(a['title'].lower(), b['title'].lower())
+        rows.sort(cmp=compare)
+        with open(filename, 'w') as f:
             fieldnames=['urn', 'title', 'author', 'download_url']
             category_fieldnames = self.get_category_fieldnames(rows, fieldnames)
             fieldnames.extend(category_fieldnames)
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if not parser.append:
-                writer.writeheader()
+            writer.writeheader()
             writer.writerows(rows)
 
     def create_row_data(self, base_query, source_file):
@@ -528,9 +539,9 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                     # just basic headers.
                     return None
 
-                for path in category_paths:
-                    path = self.header_to_path(path)
-                    category_tree.add_path(path)
+        for path in category_paths:
+            path = self.header_to_path(path)
+            category_tree.add_path(path)
 
         def find_base_nodes(category_node):
             if not category_node.children:
