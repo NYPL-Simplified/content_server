@@ -24,7 +24,7 @@ from ..core.model import (
 )
 from ..core.s3 import DummyS3Uploader
 
-from ..lanes import IdentifiersLane
+from ..lanes import StaticFeedBaseLane
 from ..opds import StaticFeedAnnotator
 from ..scripts import (
     StaticFeedCSVExportScript,
@@ -293,18 +293,18 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         expected = sorted(['Fiction', 'Short Stories', 'Nonfiction'])
         eq_(expected, sublane_names(top_level))
 
-        # Nonfiction has no subcategories, so it is an IdentifiersLane
+        # Nonfiction has no subcategories, so it is an StaticFeedBaseLane
         # with works.
         nonfiction = sublane_by_name(top_level, 'Nonfiction')
-        eq_(True, isinstance(nonfiction, IdentifiersLane))
+        eq_(True, isinstance(nonfiction, StaticFeedBaseLane))
         eq_(1, len(nonfiction.identifiers))
 
         # Short Stories are an intermediate Lane object, with an
-        # appropriate IdentifiersLane sublane.
+        # appropriate StaticFeedBaseLane sublane.
         shorts = sublane_by_name(top_level, 'Short Stories')
         eq_(True, isinstance(shorts, Lane))
         [general_fiction] = shorts.sublanes.lanes
-        eq_(True, isinstance(general_fiction, IdentifiersLane))
+        eq_(True, isinstance(general_fiction, StaticFeedBaseLane))
         eq_('General Fiction', general_fiction.name)
         eq_(1, len(general_fiction.identifiers))
 
@@ -315,7 +315,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
         for lane in fiction.sublanes:
             # They all have identifiers.
-            eq_(True, isinstance(lane, IdentifiersLane))
+            eq_(True, isinstance(lane, StaticFeedBaseLane))
         # Even more than 1!
         horror = sublane_by_name(fiction, 'Horror')
         eq_(3, len(horror.identifiers))
@@ -329,10 +329,10 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         assert_raises(ValueError, self.script.make_lanes_from_csv, csv_filename)
 
         # If the CSV doesn't include columns for any lanes, a single
-        # IdentifiersLane with works is returned.
+        # StaticFeedBaseLane with works is returned.
         csv_filename = os.path.abspath('tests/files/scripts/laneless.csv')
         result = self.script.make_lanes_from_csv(csv_filename)[0]
-        eq_(True, isinstance(result, IdentifiersLane))
+        eq_(True, isinstance(result, StaticFeedBaseLane))
         eq_(3, len(result.identifiers))
 
     def test_create_feeds(self):
@@ -344,7 +344,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         for work in [omega, alpha, zeta]:
             identifier = work.license_pools[0].identifier
             identifiers.append(identifier)
-        lane = IdentifiersLane(
+        lane = StaticFeedBaseLane(
             self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
 
@@ -377,7 +377,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
 
         pagination = Pagination(size=1)
-        lane = IdentifiersLane(
+        lane = StaticFeedBaseLane(
             self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
         facet = Facets('main', 'always', 'title')

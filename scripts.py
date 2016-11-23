@@ -47,7 +47,7 @@ from core.util import (
 
 from coverage import GutenbergEPUBCoverageProvider
 from lanes import (
-    IdentifiersLane,
+    StaticFeedBaseLane,
     StaticFeedParentLane,
 )
 from marc import MARCExtractor
@@ -659,7 +659,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         if parsed.urns:
             identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                            for urn in parsed.urns]
-            lane = IdentifiersLane(
+            lane = StaticFeedBaseLane(
                 self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
             full_query = lane.works()
@@ -773,9 +773,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             if not lanes:
                 # There aren't categorical lanes in this csv, so
-                # create and return a single IdentifiersLane.
+                # create and return a single StaticFeedBaseLane.
                 identifiers = urns_to_identifiers.values()
-                single_lane = IdentifiersLane(
+                single_lane = StaticFeedBaseLane(
                     self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
                 )
                 return single_lane, single_lane.works()
@@ -788,7 +788,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 # This lane has no Works and can be ignored.
                 continue
             lane_path = self.header_to_path(lane_header)
-            base_lane = IdentifiersLane(self._db, identifiers, lane_path[-1])
+            base_lane = StaticFeedBaseLane(self._db, identifiers, lane_path[-1])
             lanes_with_works.append(base_lane)
 
             self._add_lane_to_lane_path(top_level_lane, base_lane, lane_path)
@@ -814,7 +814,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
                 # Make sure it doesn't have any Works in it, or creating
                 # the feed files will get dicey.
-                if isinstance(target, IdentifiersLane):
+                if isinstance(target, StaticFeedBaseLane):
                     flawed_lane_path = '>'.join(lane_path[:-1])
                     raise ValueError(
                         "'%s' is configured with both Works AND a sublane"
