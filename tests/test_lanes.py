@@ -80,12 +80,13 @@ class TestStaticFeedParentLane(DatabaseTest):
         result = lane.featured_works()
         eq_(sorted([w1, w3]), sorted(result))
 
-        # If featured works go above the lane size, they're all included.
+        # If featured works go above the lane size, a random sampling
+        # that meets the featured lane size is included.
         w2_lane.featured.append(w2_identifier)
         result = lane.featured_works()
-        eq_(sorted([w1, w2, w3]), sorted(result))
+        eq_(2, len(result))
 
         # Parent lanes retrieve the featured works of sublanes.
         parent.sublanes.add(lane)
         result = parent.featured_works()
-        eq_(sorted([w1, w2, w3]), sorted(result))
+        eq_(2, len(result))

@@ -1,3 +1,4 @@
+import random
 from nose.tools import set_trace
 from sqlalchemy.sql.expression import func
 
@@ -87,6 +88,10 @@ class StaticFeedParentLane(QueryGeneratedLane):
         from_sublanes = Work.from_identifiers(self._db, sublane_features)
         if from_sublanes:
             works += from_sublanes.all()
+        random.shuffle(works)
+
+        if len(works) >= self.FEATURED_LANE_SIZE:
+            return works[:self.FEATURED_LANE_SIZE]
 
         remaining_spots = self.FEATURED_LANE_SIZE - len(works)
         if remaining_spots <= 0:
@@ -99,11 +104,11 @@ class StaticFeedParentLane(QueryGeneratedLane):
         if not qu:
             return []
 
-        random = qu.order_by(func.random())
+        filler_qu = qu.order_by(func.random())
         if len(works) > 0:
             # Remove any duplicate works.
             subquery = from_sublanes.with_labels().subquery()
-            random = random.outerjoin(subquery, Work.id==subquery.c.works_id).\
+            filler_qu = filler_qu.outerjoin(subquery, Work.id==subquery.c.works_id).\
                 filter(subquery.c.works_id==None)
-        works += random.limit(remaining_spots).all()
+        works += filler_qu.limit(remaining_spots).all()
         return works
