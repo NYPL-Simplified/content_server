@@ -55,10 +55,11 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         eq_(5, len(row_data))
 
         # Only the basic work information headers are included.
+        expected = self.script.NONLANE_HEADERS[:]
+        expected.remove('featured')
         all_headers = list()
         [all_headers.extend(r.keys()) for r in row_data]
-        all_headers = set(all_headers)
-        eq_(sorted(self.script.NONLANE_HEADERS), sorted(all_headers))
+        eq_(sorted(expected), sorted(set(all_headers)))
 
         # When there are categories, the rows get sorted into their places.
         row_data = list(self.script.create_row_data(

@@ -234,7 +234,7 @@ class DirectoryImportScript(Script):
 class StaticFeedScript(Script):
 
     # Identifies csv headers that are not considered titles for lanes.
-    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub']
+    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub', 'featured']
 
     @classmethod
     def header_to_path(cls, header):
@@ -513,6 +513,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         for node, works_query in works_by_category_node.items():
             for work, identifier, url in works_query:
                 row_data = self.basic_work_row_data(work, identifier, url)
+                row_data['featured'] = ''.encode('utf-8')
                 row_data[str(node)] = 'x'.encode('utf-8')
                 yield row_data
 
@@ -763,10 +764,13 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             # Sort identifiers into their intended lane.
             urns_to_identifiers = dict()
+            all_featured = list()
             for row in reader:
                 urn = row.get('urn')
                 identifier = Identifier.parse_urn(self._db, urn)[0]
                 urns_to_identifiers[urn] = identifier
+                if row.get('featured'):
+                    all_featured.append(identifier)
                 for header in lane_headers:
                     if row.get(header):
                         lanes[header].append(identifier)
@@ -788,7 +792,10 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 # This lane has no Works and can be ignored.
                 continue
             lane_path = self.header_to_path(lane_header)
-            base_lane = StaticFeedBaseLane(self._db, identifiers, lane_path[-1])
+            featured = filter(lambda i: i in all_featured, identifiers)
+            base_lane = StaticFeedBaseLane(
+                self._db, identifiers, lane_path[-1], featured=featured
+            )
             lanes_with_works.append(base_lane)
 
             self._add_lane_to_lane_path(top_level_lane, base_lane, lane_path)
