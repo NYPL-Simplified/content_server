@@ -5,8 +5,9 @@ import re
 from collections import defaultdict
 from datetime import datetime
 from nose.tools import set_trace
-from sqlalchemy.orm import lazyload
 from lxml import etree
+
+from sqlalchemy import or_
 
 from core.classifier import Classifier
 from core.scripts import Script
@@ -21,6 +22,7 @@ from core.metadata_layer import (
     ReplacementPolicy,
 )
 from core.model import (
+    Classification,
     DataSource,
     DeliveryMechanism,
     Edition,
@@ -33,6 +35,7 @@ from core.model import (
     Representation,
     Resource,
     RightsStatus,
+    Subject,
     Work,
     WorkGenre,
 )
@@ -349,6 +352,8 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
     LANGUAGES = LanguageCodes.english_names_to_three.keys()
 
+    SUBJECTS = ['Short Stories']
+
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
@@ -447,68 +452,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                 yield self.basic_work_row_data(*item)
             return
 
-        works_by_category_node = dict()
-        filter_nodes = [n for n in category_nodes if not n.default]
-        default_nodes = [n for n in category_nodes if n.default]
-
-        for category_node in filter_nodes:
-            path = category_node.path
-            if not path:
-                continue
-
-            # Apply category criteria to the base query, going from parent
-            # to base node, assuming increasing specificity.
-            category_node_qu = base_query
-            for node in path[:-1]:
-                category_node_qu = self.apply_node(node, category_node_qu)
-            category_node_qu = self.apply_node(path[-1], category_node_qu, genre=True)
-            works_by_category_node[category_node] = category_node_qu
-
-
-        def sort_key(default_node):
-            # Default lanes should be applied to remaining works
-            # according to the specificity of their parent class.
-            parent = default_node.parent.name
-            if parent.lower() in self.LANGUAGES:
-                return 3
-            if parent.lower() in self.FICTIONALITY:
-                return 2
-            else:
-                # The parent is a genre.
-                return 1
-
-        default_nodes = sorted(default_nodes, key=sort_key)
-        for category_node in default_nodes:
-            # Default nodes are catchall lanes like "General Fiction".
-            # Because they don't necessarily represent specific genres,
-            # they consist of whichever works are left over that also
-            # abide by their parent categories.
-            path = category_node.path
-            category_node_qu = base_query
-
-            for node in path[:-2]:
-                # Apply all but the final node, which could be something
-                # like "General Fiction" or "Nonfiction", and its parent.
-                category_node_qu = self.apply_node(node, category_node_qu)
-
-            # Apply the parent node in cases where it may be a relevant
-            # genre, e.g. "Short Stories>General Fiction"
-            category_node_qu = self.apply_node(
-                category_node.parent, category_node_qu, genre=True
-            )
-
-            if category_node.name in self.FICTIONALITY:
-                # Apply path criteria if it is related to fictionality.
-                category_node_qu = self.apply_node(category_node, category_node_qu)
-
-            # Remove any works included in other queries.
-            existing_queries = works_by_category_node.values()
-            placed_works_qu = existing_queries[0].union(*existing_queries[1:])
-            subquery = placed_works_qu.subquery()
-            category_node_qu = category_node_qu.\
-                outerjoin(subquery, Work.id==subquery.c.works_id).\
-                filter(subquery.c.works_id==None)
-            works_by_category_node[category_node] = category_node_qu
+        works_by_category_node = self.apply_nodes(category_nodes, base_query)
 
         for node, works_query in works_by_category_node.items():
             for work, identifier, url in works_query:
@@ -525,18 +469,83 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             epub=url.encode('utf-8')
         )
 
-    def apply_node(self, node, qu, genre=False):
+    def apply_nodes(self, category_nodes, qu):
+        """Applies category criteria to the base query for each CategoryNode"""
+
+        def sort_key(node):
+            # Lanes should be applied to works according to the
+            # specificity of their parent classes.
+            parents = self.header_to_path(str(node))[-1]
+            parents = [n.lower() for n in parents]
+            genre_parents = filter(
+                lambda n: n not in self.LANGUAGES and n not in self.FICTIONALITY,
+                parents
+            )
+            specificity = -(len(genre_parents))
+            if node.default:
+                # Default nodes are sorted to the end of the list, while
+                # otherwise maintaining an order of specificity.
+                return specificity + 100
+            return specificity
+
+        category_nodes = sorted(category_nodes, key=sort_key)
+        works_by_category_node = dict()
+        for category_node in category_nodes:
+            # Apply category criteria to the base query, going from
+            # parent to base node, assuming increasing specificity.
+            path = category_node.path
+            if category_node.default and category_node.name.lower() not in self.FICTIONALITY:
+                # Default nodes are catchall lanes like "Fiction" or
+                # "General Fiction". Because they don't necessarily represent
+                # specific genres, we shouldn't apply them willy nilly.
+                path = path[:-1]
+            node_qu = qu
+
+            if path[0].name.lower() not in self.LANGUAGES:
+                # The default language is English.
+                node_qu = self.apply_language(node_qu, 'English')
+
+            for node in path:
+                node_qu = self.apply_node(node, node_qu)
+
+            # Remove any works included in previously-run (and thus more
+            # specific) categories.
+            existing_queries = list()
+            if category_node.default:
+                existing_queries = works_by_category_node.values()
+            else:
+                existing_queries = [qu for n, qu in works_by_category_node.items()
+                                    if n.name == category_node.name]
+
+            if existing_queries:
+                placed_works_qu = existing_queries[0].union(*existing_queries[1:])
+                subquery = placed_works_qu.subquery()
+                node_qu = node_qu.outerjoin(subquery, Work.id==subquery.c.works_id).\
+                    filter(subquery.c.works_id==None)
+
+            node_qu = node_qu.distinct(Work.id)
+            works_by_category_node[category_node] = node_qu
+
+        return works_by_category_node
+
+    def apply_node(self, node, qu):
         if node.name == 'Main':
             # This is the head of the CategoryNode tree. Ignore it.
             return qu
-        elif node.name.lower() in self.LANGUAGES:
+        if node.name.lower() in self.LANGUAGES:
             return self.apply_language(qu, node.name)
-        elif node.name.lower() in self.FICTIONALITY:
+        if node.name.lower() in self.FICTIONALITY:
             return self.apply_fiction_status(qu, node.name)
-        elif genre:
-            # Only apply genre filtering for particular CategoryNodes.
-            return qu.join(Work.work_genres).join(WorkGenre.genre).\
-                filter(Genre.name==node.name)
+        if node.name in self.SUBJECTS:
+            qu = qu.join(Identifier.classifications).\
+                join(Classification.subject).join(Work.work_genres).\
+                join(WorkGenre.genre).filter(
+                    or_(Genre.name == node.name, Subject.name == node.name)
+                )
+            return qu
+        qu = qu.join(Work.work_genres, aliased=True, from_joinpoint=True).\
+            join(WorkGenre.genre, aliased=True, from_joinpoint=True).\
+            filter(Genre.name==node.name)
         return qu
 
     def apply_language(self, qu, language):
