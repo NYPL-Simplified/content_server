@@ -98,13 +98,8 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         # Nodes can be applied if they are a genre.
         node = self.script.CategoryNode('Science Fiction')
         scifi = self._work(with_open_access_download=True, genre='Science Fiction')
-        result = self.script.apply_node(node, base_query, genre=True)
-        eq_([scifi], result.all())
-
-        # A genre node isn't applied without clearance.
-        node = self.script.CategoryNode('Science Fiction')
         result = self.script.apply_node(node, base_query)
-        eq_(base_query.all(), result.all())
+        eq_([scifi], result.all())
 
         # A head node isn't applied.
         node = self.script.CategoryNode('Main')
