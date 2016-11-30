@@ -173,7 +173,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             'index.opds', 'index_2.opds', 'index_author.opds',
             'index_author_2.opds'
         ]
-        expected = [self.uploader.content_root()+f for f in expected_filenames]
+        expected = [self.uploader.static_feed_root()+f for f in expected_filenames]
         result = [rep.mirror_url for rep in self.uploader.uploaded]
         eq_(sorted(expected), sorted(result))
 
@@ -211,13 +211,13 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         ]
 
         created = self._db.query(Representation.mirror_url).\
-            filter(Representation.mirror_url.like(self.uploader.content_root()+'%')).\
+            filter(Representation.mirror_url.like(self.uploader.static_feed_root()+'%')).\
             all()
         created_filenames = [os.path.split(f[0])[1] for f in created]
         eq_(sorted(expected_filenames), sorted(created_filenames))
 
         def get_feed(filename):
-            like_str = self.uploader.content_root() + filename + '.opds'
+            like_str = self.uploader.static_feed_root() + filename + '.opds'
             representation = self._db.query(Representation).\
                 filter(Representation.mirror_url.like(like_str)).one()
             if not representation:
