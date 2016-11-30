@@ -476,12 +476,13 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         def sort_key(node):
             # Lanes should be applied to works according to the
             # specificity of their parent classes.
-            parents = self.header_to_path(str(node))[-1]
+            parents = self.header_to_path(str(node))[:-1]
             parents = [n.lower() for n in parents]
             genre_parents = filter(
                 lambda n: n not in self.LANGUAGES and n not in self.FICTIONALITY,
                 parents
             )
+
             specificity = -(len(genre_parents))
             if node.default:
                 # Default nodes are sorted to the end of the list, while
@@ -538,15 +539,20 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         if node.name.lower() in self.FICTIONALITY:
             return self.apply_fiction_status(qu, node.name)
         if node.name in self.SUBJECTS:
-            qu = qu.join(Identifier.classifications).\
-                join(Classification.subject).join(Work.work_genres).\
+            return qu.outerjoin(Identifier.classifications).\
+                outerjoin(Classification.subject).join(Work.work_genres).\
                 join(WorkGenre.genre).filter(
                     or_(Genre.name == node.name, Subject.name == node.name)
                 )
-            return qu
-        qu = qu.join(Work.work_genres, aliased=True, from_joinpoint=True).\
-            join(WorkGenre.genre, aliased=True, from_joinpoint=True).\
-            filter(Genre.name==node.name)
+        if not node.children:
+            # This is a base-level genre and should be applied.
+            return qu.join(Work.work_genres, aliased=True, from_joinpoint=True).\
+                join(WorkGenre.genre, aliased=True, from_joinpoint=True).\
+                filter(Genre.name==node.name)
+
+        # This is the head of the CategoryNode tree or an intermediate
+        # genre lane that doesn't give helpful WorkGenre filtering info,
+        # like Horror in Fiction > Horror > Paranormal. Ignore it.
         return qu
 
     def apply_language(self, qu, language):

@@ -78,7 +78,6 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         work_has_category_path(short, 'Short Stories>General Fiction')
         work_has_category_path(history, 'Nonfiction')
 
-
     def test_apply_node(self):
         ignored_work = self._work(with_open_access_download=True)
         base_query = self._db.query(Work)
