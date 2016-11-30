@@ -106,6 +106,12 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         result = self.script.apply_node(node, base_query)
         eq_(base_query.all(), result.all())
 
+    def test_get_base_categories(self):
+        nodes = self.script.get_base_categories('tests/files/scripts/categories.yml')
+        eq_(19, len(nodes))
+
+        nodes = self.script.get_base_categories('tests/files/scripts/mini.csv')
+        eq_(3, len(nodes))
 
 class TestStaticFeedGenerationScript(DatabaseTest):
 

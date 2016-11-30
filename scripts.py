@@ -2,6 +2,7 @@ import argparse
 import csv
 import os
 import re
+import yaml
 from collections import defaultdict
 from datetime import datetime
 from nose.tools import set_trace
@@ -570,18 +571,35 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         category_tree = self.CategoryNode.head()
 
         with open(category_file) as f:
-            # TODO: Import from YAML as well.
+            if category_file.endswith('.yml'):
+                categories = yaml.load(f)
+                category_paths = list()
+
+                def unpack(category, ancestors=None):
+                    path = ancestors or list()
+                    if isinstance(category, dict):
+                        [(parent, children)] = category.items()
+                        path.append(parent)
+                        for child in children:
+                            unpack(child, ancestors=path)
+                    else:
+                        full_path = path[:]
+                        full_path.append(category)
+                        category_paths.append(full_path)
+
+                for category in categories:
+                    unpack(category)
+
             if category_file.endswith('.csv'):
                 reader = csv.DictReader(f)
                 category_paths = self.category_paths(reader)
-                if not category_paths:
-                    # The source CSV didn't have any categories,
-                    # just basic headers.
-                    return None
+                category_paths = [self.header_to_path(p) for p in category_paths]
 
         for path in category_paths:
-            path = self.header_to_path(path)
             category_tree.add_path(path)
+        if not category_paths:
+            # The source file didn't have any categories.
+            return None
 
         def find_base_nodes(category_node):
             if not category_node.children:
