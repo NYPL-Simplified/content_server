@@ -8,7 +8,10 @@ from datetime import datetime
 from nose.tools import set_trace
 from lxml import etree
 
-from sqlalchemy import or_
+from sqlalchemy import (
+    not_,
+    or_,
+)
 
 from core.classifier import Classifier
 from core.scripts import Script
@@ -454,9 +457,8 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             return
 
         works_by_category_node = self.apply_nodes(category_nodes, base_query)
-
-        for node, works_query in works_by_category_node.items():
-            for work, identifier, url in works_query:
+        for node, works in works_by_category_node.items():
+            for work, identifier, url in works:
                 row_data = self.basic_work_row_data(work, identifier, url)
                 row_data['featured'] = ''.encode('utf-8')
                 row_data[str(node)] = 'x'.encode('utf-8')
@@ -512,21 +514,26 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
             # Remove any works included in previously-run (and thus more
             # specific) categories.
-            existing_queries = list()
+            placed_works = list()
             if category_node.default:
-                existing_queries = works_by_category_node.values()
+                placed_works = works_by_category_node.values()
             else:
-                existing_queries = [qu for n, qu in works_by_category_node.items()
-                                    if n.name == category_node.name]
+                placed_works = [results for n, results in works_by_category_node.items()
+                                if n.name == category_node.name]
 
-            if existing_queries:
-                placed_works_qu = existing_queries[0].union(*existing_queries[1:])
-                subquery = placed_works_qu.subquery()
-                node_qu = node_qu.outerjoin(subquery, Work.id==subquery.c.works_id).\
-                    filter(subquery.c.works_id==None)
+            if placed_works:
+                placed_works_ids = set()
+                for results in placed_works:
+                    for work, _, _ in results:
+                        placed_works_ids.add(work.id)
+                node_qu = node_qu.filter(not_(Work.id.in_(placed_works_ids)))
 
-            node_qu = node_qu.distinct(Work.id)
-            works_by_category_node[category_node] = node_qu
+            works_results = node_qu.distinct(Work.id).all()
+            self.log.info(
+                "%i results found for lane %s",
+                len(works_results), category_node
+            )
+            works_by_category_node[category_node] = works_results
 
         return works_by_category_node
 
@@ -833,7 +840,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             self._add_lane_to_lane_path(top_level_lane, base_lane, lane_path)
 
-        full_query = StaticFeedParentLane.unify_lane_queries(lanes_with_works)
+        full_query = top_level_lane.works()
         self.log_missing_identifiers(identifiers, full_query)
 
         return top_level_lane, full_query
