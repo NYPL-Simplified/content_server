@@ -538,9 +538,6 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         return works_by_category_node
 
     def apply_node(self, node, qu):
-        if node.name == 'Main':
-            # This is the head of the CategoryNode tree. Ignore it.
-            return qu
         if node.name.lower() in self.LANGUAGES:
             return self.apply_language(qu, node.name)
         if node.name.lower() in self.FICTIONALITY:

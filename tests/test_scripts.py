@@ -100,11 +100,6 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         result = self.script.apply_node(node, base_query)
         eq_([scifi], result.all())
 
-        # A head node isn't applied.
-        node = self.script.CategoryNode('Main')
-        result = self.script.apply_node(node, base_query)
-        eq_(base_query.all(), result.all())
-
     def test_get_base_categories(self):
         nodes = self.script.get_base_categories('tests/files/scripts/categories.yml')
         eq_(19, len(nodes))
