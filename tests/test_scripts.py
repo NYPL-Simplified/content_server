@@ -175,8 +175,8 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(4, len(self.uploader.uploaded))
 
         expected_filenames = [
-            'index.opds', 'index_2.opds', 'index_author.opds',
-            'index_author_2.opds'
+            'index.xml', 'index_2.xml', 'index_author.xml',
+            'index_author_2.xml'
         ]
         expected = [self.uploader.static_feed_root()+f for f in expected_filenames]
         result = [rep.mirror_url for rep in self.uploader.uploaded]
@@ -209,10 +209,10 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(9, len(self.uploader.content))
 
         expected_filenames = [
-            'index.opds', 'nonfiction.opds', 'nonfiction_author.opds',
-            'fiction.opds', 'fiction_horror.opds', 'fiction_horror_author.opds',
-            'fiction_poetry.opds', 'fiction_poetry_sonnets.opds',
-            'fiction_poetry_sonnets_author.opds'
+            'index.xml', 'nonfiction.xml', 'nonfiction_author.xml',
+            'fiction.xml', 'fiction_horror.xml', 'fiction_horror_author.xml',
+            'fiction_poetry.xml', 'fiction_poetry_sonnets.xml',
+            'fiction_poetry_sonnets_author.xml'
         ]
 
         created = self._db.query(Representation.mirror_url).\
@@ -222,7 +222,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(sorted(expected_filenames), sorted(created_filenames))
 
         def get_feed(filename):
-            like_str = self.uploader.static_feed_root() + filename + '.opds'
+            like_str = self.uploader.static_feed_root() + filename + '.xml'
             representation = self._db.query(Representation).\
                 filter(Representation.mirror_url.like(like_str)).one()
             if not representation:
@@ -240,7 +240,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(4, len(index.entries))
 
         # It's a grouped feed with proper collection links.
-        expected = [url+'/'+f+'.opds' for f in ['fiction', 'nonfiction']]
+        expected = [url+'/'+f+'.xml' for f in ['fiction', 'nonfiction']]
         eq_(sorted(set(expected)), sorted(collection_links(index)))
 
         # Other intermediate lanes also have collection_links.
@@ -399,7 +399,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(w1.author, entry.simplified_sort_name)
 
         [next_link] = links_by_rel(parsed, 'next')
-        eq_(next_link.href, 'https://ls.org/index_title_2.opds')
+        eq_(next_link.href, 'https://ls.org/index_title_2.xml')
         eq_([], links_by_rel(parsed, 'previous'))
         eq_([], links_by_rel(parsed, 'first'))
 
@@ -410,7 +410,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
         [previous_link] = links_by_rel(parsed, 'previous')
         [first_link] = links_by_rel(parsed, 'first')
-        first = 'https://ls.org/index_title.opds'
+        first = 'https://ls.org/index_title.xml'
         eq_(previous_link.href, first)
         eq_(first_link.href, first)
         eq_([], links_by_rel(parsed, 'next'))

@@ -724,7 +724,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 if parsed.upload:
                     self.upload(filename, page.content, uploader=uploader)
                 else:
-                    filename = os.path.abspath(filename + '.opds')
+                    filename = os.path.abspath(filename + '.xml')
                     with open(filename, 'w') as f:
                         f.write(page.content)
                     self.log.info("OPDS feed saved locally at %s", filename)
