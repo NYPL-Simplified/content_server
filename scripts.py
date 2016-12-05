@@ -45,7 +45,6 @@ from core.model import (
 )
 from core.monitor import PresentationReadyMonitor
 from core.opds import AcquisitionFeed
-from core.s3 import S3Uploader
 from core.external_search import ExternalSearchIndex
 from core.util import (
     fast_query_count,
@@ -60,6 +59,7 @@ from lanes import (
 from marc import MARCExtractor
 from monitor import GutenbergMonitor
 from opds import StaticFeedAnnotator, ContentServerAnnotator
+from s3 import S3Uploader
 
 
 class GutenbergMonitorScript(Script):

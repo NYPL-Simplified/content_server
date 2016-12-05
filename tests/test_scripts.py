@@ -22,10 +22,10 @@ from ..core.model import (
     Representation,
     Work,
 )
-from ..core.s3 import DummyS3Uploader
 
 from ..lanes import StaticFeedBaseLane
 from ..opds import StaticFeedAnnotator
+from ..s3 import DummyS3Uploader
 from ..scripts import (
     StaticFeedCSVExportScript,
     StaticFeedGenerationScript,
