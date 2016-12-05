@@ -734,11 +734,16 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             # It's slow to do these individually, but this won't run very often.
             for work in full_query.all():
-                doc = work.to_search_document()
-                doc["_index"] = search_client.works_index
-                doc["_type"] = search_client.work_document_type
-                doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
-                search_documents.append(doc)
+                # TODO: A number of works are not able to be added to the feed
+                # or search because they are loaded from the database without
+                # all of their LicensePools (i.e. a single, superceded LicensePool).
+                # Make it stop.
+                if StaticFeedAnnotator.active_licensepool_for(work):
+                    doc = work.to_search_document()
+                    doc["_index"] = search_client.works_index
+                    doc["_type"] = search_client.work_document_type
+                    doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
+                    search_documents.append(doc)
 
             success_count, errors = search_client.bulk(
                 search_documents,
