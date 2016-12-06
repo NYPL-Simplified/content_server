@@ -708,7 +708,10 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
         search_link = None
         if parsed.search_url and parsed.search_index:
-            search_link = feed_id + "/search"
+            search_link = feed_id
+            if not search_link.endswith('/'):
+                search_link += '/'
+            search_link += "search"
 
         feeds = list(self.create_feeds([lane], feed_id, page_size, search_link))
 
