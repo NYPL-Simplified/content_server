@@ -14,7 +14,7 @@ class StaticFeedBaseLane(QueryGeneratedLane):
     def __init__(self, _db, identifiers, lane_name, featured=None, **kwargs):
         if not identifiers:
             raise ValueError(
-                "IdentifierGeneratedLane can't be created without identifiers"
+                "StaticFeedBaseLane can't be created without identifiers"
             )
         self.identifiers = identifiers
         self.featured = featured or list()
