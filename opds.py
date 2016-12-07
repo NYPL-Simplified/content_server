@@ -119,6 +119,9 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             # This is the home lane.
             return cls.HOME_FILENAME
 
+        if not lane.parent:
+            return cls.slugify_feed_title(lane.name)
+
         path = list()
         while lane.parent:
             path.insert(0, cls.slugify_feed_title(lane.name))

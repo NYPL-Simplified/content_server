@@ -241,7 +241,7 @@ class DirectoryImportScript(Script):
 class StaticFeedScript(Script):
 
     # Identifies csv headers that are not considered titles for lanes.
-    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub', 'featured']
+    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub', 'featured', 'youth']
 
     @classmethod
     def header_to_path(cls, header):
@@ -461,6 +461,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             for work, identifier, url in works:
                 row_data = self.basic_work_row_data(work, identifier, url)
                 row_data['featured'] = ''.encode('utf-8')
+                row_data['youth'] = ''.encode('utf-8')
                 row_data[str(node)] = 'x'.encode('utf-8')
                 yield row_data
 
@@ -694,6 +695,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         if (parsed.search_index and not parsed.search_url) or (parsed.search_url and not parsed.search_index):
             raise ValueError("Both --search-url and --search-index arguments must be included to upload to a search index")
 
+        youth_lane = None
         if parsed.urns:
             identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                            for urn in parsed.urns]
@@ -704,7 +706,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             self.log_missing_identifiers(lane.identifiers, full_query)
         else:
-            lane, full_query = self.make_lanes_from_csv(source_csv)
+            lane, full_query, youth_lane = self.make_lanes_from_csv(source_csv)
 
         search_link = None
         if parsed.search_url and parsed.search_index:
@@ -714,6 +716,10 @@ class StaticFeedGenerationScript(StaticFeedScript):
             search_link += "search"
 
         feeds = list(self.create_feeds([lane], feed_id, page_size, search_link))
+
+        if youth_lane:
+            youth_feeds = self.create_feeds([youth_lane], feed_id, page_size)
+            feeds += youth_feeds
 
         for base_filename, feed_pages in feeds:
             for index, page in enumerate(feed_pages):
@@ -799,7 +805,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
         :return: a top-level StaticFeedParentLane, complete with sublanes
         """
         lanes = defaultdict(list)
-
         with open(filename) as f:
             reader = csv.DictReader(f)
 
@@ -810,24 +815,33 @@ class StaticFeedGenerationScript(StaticFeedScript):
             # Sort identifiers into their intended lane.
             urns_to_identifiers = dict()
             all_featured = list()
+            all_youth = list()
             for row in reader:
                 urn = row.get('urn')
                 identifier = Identifier.parse_urn(self._db, urn)[0]
                 urns_to_identifiers[urn] = identifier
                 if row.get('featured'):
                     all_featured.append(identifier)
+                if row.get('youth'):
+                    all_youth.append(identifier)
                 for header in lane_headers:
                     if row.get(header):
                         lanes[header].append(identifier)
 
-            if not lanes:
-                # There aren't categorical lanes in this csv, so
-                # create and return a single StaticFeedBaseLane.
-                identifiers = urns_to_identifiers.values()
-                single_lane = StaticFeedBaseLane(
-                    self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
-                )
-                return single_lane, single_lane.works()
+        youth_lane = None
+        if all_youth:
+            youth_lane = StaticFeedBaseLane(
+                self._db, all_youth, "Children's Books"
+            )
+
+        if not lanes:
+            # There aren't categorical lanes in this csv, so
+            # create and return a single StaticFeedBaseLane.
+            identifiers = urns_to_identifiers.values()
+            single_lane = StaticFeedBaseLane(
+                self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+            )
+            return single_lane, single_lane.works(), youth_lane
 
         # Create lanes and sublanes.
         top_level_lane = self.empty_lane()
@@ -848,7 +862,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         full_query = top_level_lane.works()
         self.log_missing_identifiers(identifiers, full_query)
 
-        return top_level_lane, full_query
+        return top_level_lane, full_query, youth_lane
 
     def _add_lane_to_lane_path(self, top_level_lane, base_lane, lane_path):
         """Adds a lane with works to the proper place in a tiered lane
