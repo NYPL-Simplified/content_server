@@ -718,7 +718,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         feeds = list(self.create_feeds([lane], feed_id, page_size, search_link))
 
         if youth_lane:
-            youth_feeds = self.create_feeds([youth_lane], feed_id, page_size)
+            youth_feeds = list(self.create_feeds([youth_lane], feed_id, page_size))
             feeds += youth_feeds
 
         for base_filename, feed_pages in feeds:
