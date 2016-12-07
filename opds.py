@@ -127,14 +127,15 @@ class StaticFeedAnnotator(ContentServerAnnotator):
 
     def __init__(self, base_url, lane, default_order=None, search_link=None):
         self.default_order = default_order
+        if not base_url.endswith('/'):
+            base_url += '/'
         self.base_url = base_url
         self.lane = lane
         self.search_link = search_link
-
         self.lanes_by_work = defaultdict(list)
 
     def default_lane_url(self):
-        return self.base_url + '/' + self.HOME_FILENAME + '.opds'
+        return self.base_url + self.HOME_FILENAME + '.xml'
 
     def filename_facet_segment(self, facets):
         ordered_by = list(facets.items())[0][1]
@@ -146,7 +147,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         """Incoporate order facets into filenames for static feeds"""
         filename = self.lane_filename(self.lane)
         filename += self.filename_facet_segment(facets)
-        return self.base_url + '/' + filename + '.opds'
+        return self.base_url + filename + '.xml'
 
     def feed_url(self, lane, facets, pagination):
         """Incorporate pages into filenames for static feeds"""
@@ -158,7 +159,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         if page_number > 1:
             filename += ('_%i' % page_number)
 
-        return self.base_url + '/' + filename + '.opds'
+        return self.base_url + filename + '.xml'
 
     def group_uri(self, work, license_pool, identifier):
         if not work in self.lanes_by_work:
@@ -173,7 +174,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             filename = self.lane_filename(lane)
         else:
             filename = self.HOME_FILENAME
-        return self.base_url + '/' + filename + '.opds'
+        return self.base_url + filename + '.xml'
 
     def lane_url(self, lane):
         return self.groups_url(lane)

@@ -2,11 +2,16 @@ import argparse
 import csv
 import os
 import re
+import yaml
 from collections import defaultdict
 from datetime import datetime
 from nose.tools import set_trace
-from sqlalchemy.orm import lazyload
 from lxml import etree
+
+from sqlalchemy import (
+    not_,
+    or_,
+)
 
 from core.classifier import Classifier
 from core.scripts import Script
@@ -21,6 +26,7 @@ from core.metadata_layer import (
     ReplacementPolicy,
 )
 from core.model import (
+    Classification,
     DataSource,
     DeliveryMechanism,
     Edition,
@@ -33,12 +39,12 @@ from core.model import (
     Representation,
     Resource,
     RightsStatus,
+    Subject,
     Work,
     WorkGenre,
 )
 from core.monitor import PresentationReadyMonitor
 from core.opds import AcquisitionFeed
-from core.s3 import S3Uploader
 from core.external_search import ExternalSearchIndex
 from core.util import (
     fast_query_count,
@@ -47,12 +53,13 @@ from core.util import (
 
 from coverage import GutenbergEPUBCoverageProvider
 from lanes import (
-    IdentifiersLane,
+    StaticFeedBaseLane,
     StaticFeedParentLane,
 )
 from marc import MARCExtractor
 from monitor import GutenbergMonitor
 from opds import StaticFeedAnnotator, ContentServerAnnotator
+from s3 import S3Uploader
 
 
 class GutenbergMonitorScript(Script):
@@ -234,7 +241,7 @@ class DirectoryImportScript(Script):
 class StaticFeedScript(Script):
 
     # Identifies csv headers that are not considered titles for lanes.
-    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub']
+    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub', 'featured']
 
     @classmethod
     def header_to_path(cls, header):
@@ -349,6 +356,8 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
     LANGUAGES = LanguageCodes.english_names_to_three.keys()
 
+    SUBJECTS = ['Short Stories']
+
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
@@ -447,72 +456,11 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                 yield self.basic_work_row_data(*item)
             return
 
-        works_by_category_node = dict()
-        filter_nodes = [n for n in category_nodes if not n.default]
-        default_nodes = [n for n in category_nodes if n.default]
-
-        for category_node in filter_nodes:
-            path = category_node.path
-            if not path:
-                continue
-
-            # Apply category criteria to the base query, going from parent
-            # to base node, assuming increasing specificity.
-            category_node_qu = base_query
-            for node in path[:-1]:
-                category_node_qu = self.apply_node(node, category_node_qu)
-            category_node_qu = self.apply_node(path[-1], category_node_qu, genre=True)
-            works_by_category_node[category_node] = category_node_qu
-
-
-        def sort_key(default_node):
-            # Default lanes should be applied to remaining works
-            # according to the specificity of their parent class.
-            parent = default_node.parent.name
-            if parent.lower() in self.LANGUAGES:
-                return 3
-            if parent.lower() in self.FICTIONALITY:
-                return 2
-            else:
-                # The parent is a genre.
-                return 1
-
-        default_nodes = sorted(default_nodes, key=sort_key)
-        for category_node in default_nodes:
-            # Default nodes are catchall lanes like "General Fiction".
-            # Because they don't necessarily represent specific genres,
-            # they consist of whichever works are left over that also
-            # abide by their parent categories.
-            path = category_node.path
-            category_node_qu = base_query
-
-            for node in path[:-2]:
-                # Apply all but the final node, which could be something
-                # like "General Fiction" or "Nonfiction", and its parent.
-                category_node_qu = self.apply_node(node, category_node_qu)
-
-            # Apply the parent node in cases where it may be a relevant
-            # genre, e.g. "Short Stories>General Fiction"
-            category_node_qu = self.apply_node(
-                category_node.parent, category_node_qu, genre=True
-            )
-
-            if category_node.name in self.FICTIONALITY:
-                # Apply path criteria if it is related to fictionality.
-                category_node_qu = self.apply_node(category_node, category_node_qu)
-
-            # Remove any works included in other queries.
-            existing_queries = works_by_category_node.values()
-            placed_works_qu = existing_queries[0].union(*existing_queries[1:])
-            subquery = placed_works_qu.subquery()
-            category_node_qu = category_node_qu.\
-                outerjoin(subquery, Work.id==subquery.c.works_id).\
-                filter(subquery.c.works_id==None)
-            works_by_category_node[category_node] = category_node_qu
-
-        for node, works_query in works_by_category_node.items():
-            for work, identifier, url in works_query:
+        works_by_category_node = self.apply_nodes(category_nodes, base_query)
+        for node, works in works_by_category_node.items():
+            for work, identifier, url in works:
                 row_data = self.basic_work_row_data(work, identifier, url)
+                row_data['featured'] = ''.encode('utf-8')
                 row_data[str(node)] = 'x'.encode('utf-8')
                 yield row_data
 
@@ -524,18 +472,91 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             epub=url.encode('utf-8')
         )
 
-    def apply_node(self, node, qu, genre=False):
-        if node.name == 'Main':
-            # This is the head of the CategoryNode tree. Ignore it.
-            return qu
-        elif node.name.lower() in self.LANGUAGES:
+    def apply_nodes(self, category_nodes, qu):
+        """Applies category criteria to the base query for each CategoryNode"""
+
+        def sort_key(node):
+            # Lanes should be applied to works according to the
+            # specificity of their parent classes.
+            parents = self.header_to_path(str(node))[:-1]
+            parents = [n.lower() for n in parents]
+            genre_parents = filter(
+                lambda n: n not in self.LANGUAGES and n not in self.FICTIONALITY,
+                parents
+            )
+
+            specificity = -(len(genre_parents))
+            if node.default:
+                # Default nodes are sorted to the end of the list, while
+                # otherwise maintaining an order of specificity.
+                return specificity + 100
+            return specificity
+
+        category_nodes = sorted(category_nodes, key=sort_key)
+        works_by_category_node = dict()
+        for category_node in category_nodes:
+            # Apply category criteria to the base query, going from
+            # parent to base node, assuming increasing specificity.
+            path = category_node.path
+            if category_node.default and category_node.name.lower() not in self.FICTIONALITY:
+                # Default nodes are catchall lanes like "Fiction" or
+                # "General Fiction". Because they don't necessarily represent
+                # specific genres, we shouldn't apply them willy nilly.
+                path = path[:-1]
+            node_qu = qu
+
+            if path[0].name.lower() not in self.LANGUAGES:
+                # The default language is English.
+                node_qu = self.apply_language(node_qu, 'English')
+
+            for node in path:
+                node_qu = self.apply_node(node, node_qu)
+
+            # Remove any works included in previously-run (and thus more
+            # specific) categories.
+            placed_works = list()
+            if category_node.default:
+                placed_works = works_by_category_node.values()
+            else:
+                placed_works = [results for n, results in works_by_category_node.items()
+                                if n.name == category_node.name]
+
+            if placed_works:
+                placed_works_ids = set()
+                for results in placed_works:
+                    for work, _, _ in results:
+                        placed_works_ids.add(work.id)
+                node_qu = node_qu.filter(not_(Work.id.in_(placed_works_ids)))
+
+            works_results = node_qu.distinct(Work.id).all()
+            self.log.info(
+                "%i results found for lane %s",
+                len(works_results), category_node
+            )
+            works_by_category_node[category_node] = works_results
+
+        return works_by_category_node
+
+    def apply_node(self, node, qu):
+        if node.name.lower() in self.LANGUAGES:
             return self.apply_language(qu, node.name)
-        elif node.name.lower() in self.FICTIONALITY:
+        if node.name.lower() in self.FICTIONALITY:
             return self.apply_fiction_status(qu, node.name)
-        elif genre:
-            # Only apply genre filtering for particular CategoryNodes.
-            return qu.join(Work.work_genres).join(WorkGenre.genre).\
+        if node.name in self.SUBJECTS:
+            return qu.outerjoin(Identifier.classifications).\
+                outerjoin(Classification.subject).join(Work.work_genres).\
+                join(WorkGenre.genre).filter(
+                    or_(Genre.name == node.name, Subject.name == node.name)
+                )
+        if not node.children:
+            # This is a base-level genre and should be applied.
+            return qu.join(Work.work_genres, aliased=True, from_joinpoint=True).\
+                join(WorkGenre.genre, aliased=True, from_joinpoint=True).\
                 filter(Genre.name==node.name)
+
+        # This is the head of the CategoryNode tree or an intermediate
+        # genre lane that doesn't give helpful WorkGenre filtering info,
+        # like Horror in Fiction > Horror > Paranormal. Ignore it.
         return qu
 
     def apply_language(self, qu, language):
@@ -560,18 +581,35 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         category_tree = self.CategoryNode.head()
 
         with open(category_file) as f:
-            # TODO: Import from YAML as well.
+            if category_file.endswith('.yml'):
+                categories = yaml.load(f)
+                category_paths = list()
+
+                def unpack(category, ancestors=None):
+                    path = ancestors or list()
+                    if isinstance(category, dict):
+                        [(parent, children)] = category.items()
+                        path.append(parent)
+                        for child in children:
+                            unpack(child, ancestors=path)
+                    else:
+                        full_path = path[:]
+                        full_path.append(category)
+                        category_paths.append(full_path)
+
+                for category in categories:
+                    unpack(category)
+
             if category_file.endswith('.csv'):
                 reader = csv.DictReader(f)
                 category_paths = self.category_paths(reader)
-                if not category_paths:
-                    # The source CSV didn't have any categories,
-                    # just basic headers.
-                    return None
+                category_paths = [self.header_to_path(p) for p in category_paths]
 
         for path in category_paths:
-            path = self.header_to_path(path)
             category_tree.add_path(path)
+        if not category_paths:
+            # The source file didn't have any categories.
+            return None
 
         def find_base_nodes(category_node):
             if not category_node.children:
@@ -659,7 +697,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         if parsed.urns:
             identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                            for urn in parsed.urns]
-            lane = IdentifiersLane(
+            lane = StaticFeedBaseLane(
                 self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
             full_query = lane.works()
@@ -670,7 +708,10 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
         search_link = None
         if parsed.search_url and parsed.search_index:
-            search_link = feed_id + "/search"
+            search_link = feed_id
+            if not search_link.endswith('/'):
+                search_link += '/'
+            search_link += "search"
 
         feeds = list(self.create_feeds([lane], feed_id, page_size, search_link))
 
@@ -683,7 +724,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 if parsed.upload:
                     self.upload(filename, page.content, uploader=uploader)
                 else:
-                    filename = os.path.abspath(filename + '.opds')
+                    filename = os.path.abspath(filename + '.xml')
                     with open(filename, 'w') as f:
                         f.write(page.content)
                     self.log.info("OPDS feed saved locally at %s", filename)
@@ -696,11 +737,16 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             # It's slow to do these individually, but this won't run very often.
             for work in full_query.all():
-                doc = work.to_search_document()
-                doc["_index"] = search_client.works_index
-                doc["_type"] = search_client.work_document_type
-                doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
-                search_documents.append(doc)
+                # TODO: A number of works are not able to be added to the feed
+                # or search because they are loaded from the database without
+                # all of their LicensePools (i.e. a single, superceded LicensePool).
+                # Make it stop.
+                if StaticFeedAnnotator.active_licensepool_for(work):
+                    doc = work.to_search_document()
+                    doc["_index"] = search_client.works_index
+                    doc["_type"] = search_client.work_document_type
+                    doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
+                    search_documents.append(doc)
 
             success_count, errors = search_client.bulk(
                 search_documents,
@@ -763,19 +809,22 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             # Sort identifiers into their intended lane.
             urns_to_identifiers = dict()
+            all_featured = list()
             for row in reader:
                 urn = row.get('urn')
                 identifier = Identifier.parse_urn(self._db, urn)[0]
                 urns_to_identifiers[urn] = identifier
+                if row.get('featured'):
+                    all_featured.append(identifier)
                 for header in lane_headers:
                     if row.get(header):
                         lanes[header].append(identifier)
 
             if not lanes:
                 # There aren't categorical lanes in this csv, so
-                # create and return a single IdentifiersLane.
+                # create and return a single StaticFeedBaseLane.
                 identifiers = urns_to_identifiers.values()
-                single_lane = IdentifiersLane(
+                single_lane = StaticFeedBaseLane(
                     self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
                 )
                 return single_lane, single_lane.works()
@@ -788,12 +837,15 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 # This lane has no Works and can be ignored.
                 continue
             lane_path = self.header_to_path(lane_header)
-            base_lane = IdentifiersLane(self._db, identifiers, lane_path[-1])
+            featured = filter(lambda i: i in all_featured, identifiers)
+            base_lane = StaticFeedBaseLane(
+                self._db, identifiers, lane_path[-1], featured=featured
+            )
             lanes_with_works.append(base_lane)
 
             self._add_lane_to_lane_path(top_level_lane, base_lane, lane_path)
 
-        full_query = StaticFeedParentLane.unify_lane_queries(lanes_with_works)
+        full_query = top_level_lane.works()
         self.log_missing_identifiers(identifiers, full_query)
 
         return top_level_lane, full_query
@@ -814,7 +866,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
                 # Make sure it doesn't have any Works in it, or creating
                 # the feed files will get dicey.
-                if isinstance(target, IdentifiersLane):
+                if isinstance(target, StaticFeedBaseLane):
                     flawed_lane_path = '>'.join(lane_path[:-1])
                     raise ValueError(
                         "'%s' is configured with both Works AND a sublane"

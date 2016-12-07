@@ -22,10 +22,10 @@ from ..core.model import (
     Representation,
     Work,
 )
-from ..core.s3 import DummyS3Uploader
 
-from ..lanes import IdentifiersLane
+from ..lanes import StaticFeedBaseLane
 from ..opds import StaticFeedAnnotator
+from ..s3 import DummyS3Uploader
 from ..scripts import (
     StaticFeedCSVExportScript,
     StaticFeedGenerationScript,
@@ -55,10 +55,11 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         eq_(5, len(row_data))
 
         # Only the basic work information headers are included.
+        expected = self.script.NONLANE_HEADERS[:]
+        expected.remove('featured')
         all_headers = list()
         [all_headers.extend(r.keys()) for r in row_data]
-        all_headers = set(all_headers)
-        eq_(sorted(self.script.NONLANE_HEADERS), sorted(all_headers))
+        eq_(sorted(expected), sorted(set(all_headers)))
 
         # When there are categories, the rows get sorted into their places.
         row_data = list(self.script.create_row_data(
@@ -76,7 +77,6 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         work_has_category_path(scifi, 'Fiction>Science Fiction')
         work_has_category_path(short, 'Short Stories>General Fiction')
         work_has_category_path(history, 'Nonfiction')
-
 
     def test_apply_node(self):
         ignored_work = self._work(with_open_access_download=True)
@@ -97,19 +97,15 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         # Nodes can be applied if they are a genre.
         node = self.script.CategoryNode('Science Fiction')
         scifi = self._work(with_open_access_download=True, genre='Science Fiction')
-        result = self.script.apply_node(node, base_query, genre=True)
+        result = self.script.apply_node(node, base_query)
         eq_([scifi], result.all())
 
-        # A genre node isn't applied without clearance.
-        node = self.script.CategoryNode('Science Fiction')
-        result = self.script.apply_node(node, base_query)
-        eq_(base_query.all(), result.all())
+    def test_get_base_categories(self):
+        nodes = self.script.get_base_categories('tests/files/scripts/categories.yml')
+        eq_(19, len(nodes))
 
-        # A head node isn't applied.
-        node = self.script.CategoryNode('Main')
-        result = self.script.apply_node(node, base_query)
-        eq_(base_query.all(), result.all())
-
+        nodes = self.script.get_base_categories('tests/files/scripts/mini.csv')
+        eq_(3, len(nodes))
 
 class TestStaticFeedGenerationScript(DatabaseTest):
 
@@ -174,10 +170,10 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(4, len(self.uploader.uploaded))
 
         expected_filenames = [
-            'index.opds', 'index_2.opds', 'index_author.opds',
-            'index_author_2.opds'
+            'index.xml', 'index_2.xml', 'index_author.xml',
+            'index_author_2.xml'
         ]
-        expected = [self.uploader.content_root()+f for f in expected_filenames]
+        expected = [self.uploader.static_feed_root()+f for f in expected_filenames]
         result = [rep.mirror_url for rep in self.uploader.uploaded]
         eq_(sorted(expected), sorted(result))
 
@@ -208,20 +204,20 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(9, len(self.uploader.content))
 
         expected_filenames = [
-            'index.opds', 'nonfiction.opds', 'nonfiction_author.opds',
-            'fiction.opds', 'fiction_horror.opds', 'fiction_horror_author.opds',
-            'fiction_poetry.opds', 'fiction_poetry_sonnets.opds',
-            'fiction_poetry_sonnets_author.opds'
+            'index.xml', 'nonfiction.xml', 'nonfiction_author.xml',
+            'fiction.xml', 'fiction_horror.xml', 'fiction_horror_author.xml',
+            'fiction_poetry.xml', 'fiction_poetry_sonnets.xml',
+            'fiction_poetry_sonnets_author.xml'
         ]
 
         created = self._db.query(Representation.mirror_url).\
-            filter(Representation.mirror_url.like(self.uploader.content_root()+'%')).\
+            filter(Representation.mirror_url.like(self.uploader.static_feed_root()+'%')).\
             all()
         created_filenames = [os.path.split(f[0])[1] for f in created]
         eq_(sorted(expected_filenames), sorted(created_filenames))
 
         def get_feed(filename):
-            like_str = self.uploader.content_root() + filename + '.opds'
+            like_str = self.uploader.static_feed_root() + filename + '.xml'
             representation = self._db.query(Representation).\
                 filter(Representation.mirror_url.like(like_str)).one()
             if not representation:
@@ -239,7 +235,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(4, len(index.entries))
 
         # It's a grouped feed with proper collection links.
-        expected = [url+'/'+f+'.opds' for f in ['fiction', 'nonfiction']]
+        expected = [url+'/'+f+'.xml' for f in ['fiction', 'nonfiction']]
         eq_(sorted(set(expected)), sorted(collection_links(index)))
 
         # Other intermediate lanes also have collection_links.
@@ -293,18 +289,18 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         expected = sorted(['Fiction', 'Short Stories', 'Nonfiction'])
         eq_(expected, sublane_names(top_level))
 
-        # Nonfiction has no subcategories, so it is an IdentifiersLane
+        # Nonfiction has no subcategories, so it is an StaticFeedBaseLane
         # with works.
         nonfiction = sublane_by_name(top_level, 'Nonfiction')
-        eq_(True, isinstance(nonfiction, IdentifiersLane))
+        eq_(True, isinstance(nonfiction, StaticFeedBaseLane))
         eq_(1, len(nonfiction.identifiers))
 
         # Short Stories are an intermediate Lane object, with an
-        # appropriate IdentifiersLane sublane.
+        # appropriate StaticFeedBaseLane sublane.
         shorts = sublane_by_name(top_level, 'Short Stories')
         eq_(True, isinstance(shorts, Lane))
         [general_fiction] = shorts.sublanes.lanes
-        eq_(True, isinstance(general_fiction, IdentifiersLane))
+        eq_(True, isinstance(general_fiction, StaticFeedBaseLane))
         eq_('General Fiction', general_fiction.name)
         eq_(1, len(general_fiction.identifiers))
 
@@ -315,7 +311,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
         for lane in fiction.sublanes:
             # They all have identifiers.
-            eq_(True, isinstance(lane, IdentifiersLane))
+            eq_(True, isinstance(lane, StaticFeedBaseLane))
         # Even more than 1!
         horror = sublane_by_name(fiction, 'Horror')
         eq_(3, len(horror.identifiers))
@@ -329,10 +325,10 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         assert_raises(ValueError, self.script.make_lanes_from_csv, csv_filename)
 
         # If the CSV doesn't include columns for any lanes, a single
-        # IdentifiersLane with works is returned.
+        # StaticFeedBaseLane with works is returned.
         csv_filename = os.path.abspath('tests/files/scripts/laneless.csv')
         result = self.script.make_lanes_from_csv(csv_filename)[0]
-        eq_(True, isinstance(result, IdentifiersLane))
+        eq_(True, isinstance(result, StaticFeedBaseLane))
         eq_(3, len(result.identifiers))
 
     def test_create_feeds(self):
@@ -344,7 +340,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         for work in [omega, alpha, zeta]:
             identifier = work.license_pools[0].identifier
             identifiers.append(identifier)
-        lane = IdentifiersLane(
+        lane = StaticFeedBaseLane(
             self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
 
@@ -377,7 +373,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
 
         pagination = Pagination(size=1)
-        lane = IdentifiersLane(
+        lane = StaticFeedBaseLane(
             self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
         facet = Facets('main', 'always', 'title')
@@ -398,7 +394,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(w1.author, entry.simplified_sort_name)
 
         [next_link] = links_by_rel(parsed, 'next')
-        eq_(next_link.href, 'https://ls.org/index_title_2.opds')
+        eq_(next_link.href, 'https://ls.org/index_title_2.xml')
         eq_([], links_by_rel(parsed, 'previous'))
         eq_([], links_by_rel(parsed, 'first'))
 
@@ -409,7 +405,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
         [previous_link] = links_by_rel(parsed, 'previous')
         [first_link] = links_by_rel(parsed, 'first')
-        first = 'https://ls.org/index_title.opds'
+        first = 'https://ls.org/index_title.xml'
         eq_(previous_link.href, first)
         eq_(first_link.href, first)
         eq_([], links_by_rel(parsed, 'next'))
