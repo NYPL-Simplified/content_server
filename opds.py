@@ -1,16 +1,19 @@
 import logging
 import re
 from collections import defaultdict
+from datetime import datetime
 from nose.tools import set_trace
 from flask import url_for
 from sqlalchemy.orm import lazyload
 
 from core.app_server import cdn_url_for
+from core.classifier import Classifier
+from core.lane import Facets
 from core.opds import (
-    VerboseAnnotator,
     AcquisitionFeed,
     OPDSFeed,
     UnfulfillableWork,
+    VerboseAnnotator,
 )
 from core.model import (
     Identifier,
@@ -106,6 +109,9 @@ class StaticFeedAnnotator(ContentServerAnnotator):
     TOP_LEVEL_LANE_NAME = u'All Books'
     HOME_FILENAME = u'index'
 
+    # Feeds ordered by this facet will be considered the default.
+    DEFAULT_ORDER = Facets.ORDER_TITLE
+
     @classmethod
     def slugify_feed_title(cls, feed_title):
         slug = re.sub('[.!@#\'$,]', '', feed_title.lower())
@@ -128,26 +134,40 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             lane = lane.parent
         return '_'.join(path)
 
-    def __init__(self, base_url, lane, default_order=None, search_link=None):
-        self.default_order = default_order
+    def __init__(self, base_url, lane=None, include_search=None):
         if not base_url.endswith('/'):
             base_url += '/'
         self.base_url = base_url
         self.lane = lane
-        self.search_link = search_link
+        self.include_search = include_search
         self.lanes_by_work = defaultdict(list)
+
+    def reset(self, lane):
+        self.lanes_by_work = defaultdict(list)
+        self.lane = lane
 
     def default_lane_url(self):
         return self.base_url + self.HOME_FILENAME + '.xml'
 
+    def search_url(self):
+        return self.base_url + 'search'
+
     def filename_facet_segment(self, facets):
         ordered_by = list(facets.items())[0][1]
-        if ordered_by != self.default_order:
+        if ordered_by != self.DEFAULT_ORDER:
             return '_' + ordered_by
         return ''
 
     def facet_url(self, facets):
         """Incoporate order facets into filenames for static feeds"""
+        if not self.lane:
+            # Due to constraints in AcquisitionFeed, this method
+            # is the only one that relies on a lane being set at
+            # initialization.
+            raise ValueError(
+                "StaticFeedAnnotator can't create a facet URL without"\
+                " a selected lane."
+            )
         filename = self.lane_filename(self.lane)
         filename += self.filename_facet_segment(facets)
         return self.base_url + filename + '.xml'
@@ -182,11 +202,98 @@ class StaticFeedAnnotator(ContentServerAnnotator):
     def lane_url(self, lane):
         return self.groups_url(lane)
 
+
     def annotate_feed(self, feed, lane):
-        if self.search_link:
+        if self.include_search:
             OPDSFeed.add_link_to_feed(
                 feed.feed,
                 rel="search",
-                href=self.search_link,
+                href=self.search_url,
                 type="application/opensearchdescription+xml")
-                
+
+
+class StaticFeedCOPPAAnnotator(StaticFeedAnnotator):
+
+    TOP_LEVEL_LANE_NAME = u'Instant Classics'
+    COPPA_RESTRICTION = u'http://librarysimplified.org/terms/restrictions/coppa'
+
+    def add_gate(self, youth_lane, full_lane, feed_obj):
+        details = {
+            'restriction' : self.COPPA_RESTRICTION,
+            'restriction-not-met' : self.lane_url(youth_lane),
+            'restriction-met' : self.lane_url(full_lane)
+        }
+
+        gate_tag = OPDSFeed.makeelement(
+            "{%s}gate" % OPDSFeed.SIMPLIFIED_NS, details
+        )
+        feed_obj.feed.append(gate_tag)
+
+
+class StaticCOPPANavigationFeed(OPDSFeed):
+
+    """Creates an OPDS navigation feed to guide between AcquisitionFeeds
+    representing the full 13+ collection and the <13 childrens collection,
+    in accordance with COPPA
+    """
+
+    @classmethod
+    def content(cls, *args, **kwargs):
+        kwargs['type'] = 'text'
+        return cls.E.content(*args, **kwargs)
+
+    @classmethod
+    def childrens_entry(cls, lane_url):
+        audience = Classifier.AUDIENCE_CHILDREN
+        category_details = cls.audience_details(audience)
+        return cls.entry(
+            cls.id(lane_url),
+            cls.title("I'm Under 13"),
+            cls.updated(cls._strftime(datetime.utcnow())),
+            cls.content("Read children's books"),
+            cls.category(category_details)
+        )
+
+    @classmethod
+    def full_collection_entry(cls, lane_url):
+        audience = Classifier.AUDIENCE_ADULT
+        category_details = cls.audience_details(audience)
+        return cls.entry(
+            cls.id(lane_url),
+            cls.title("I'm 13 or Older"),
+            cls.updated(cls._strftime(datetime.utcnow())),
+            cls.content('See the full collection'),
+            cls.category(category_details)
+        )
+
+    @classmethod
+    def audience_details(cls, audience):
+        return dict(
+            term=audience, label=audience, scheme='%saudience' % cls.SCHEMA_NS
+        )
+
+    def __init__(self, title, base_url, full_lane, youth_lane):
+        """Turn a list of lanes into a feed."""
+        annotator = StaticFeedCOPPAAnnotator(base_url)
+        lane_url = annotator.default_lane_url()
+
+        super(StaticCOPPANavigationFeed, self).__init__(title, lane_url)
+
+        self.create_entry(youth_lane, annotator, youth=True)
+        self.create_entry(full_lane, annotator)
+        annotator.add_gate(youth_lane, full_lane, self)
+
+    def create_entry(self, lane, annotator, youth=False):
+        annotator.reset(lane)
+        lane_url = annotator.lane_url(lane)
+        if youth:
+            entry = self.childrens_entry(lane_url)
+        else:
+            entry = self.full_collection_entry(lane_url)
+
+        link = dict(
+            type=self.ACQUISITION_FEED_TYPE, href=lane_url, rel='subsection'
+        )
+        self.add_link_to_entry(entry, **link)
+
+        self.feed.append(entry)
