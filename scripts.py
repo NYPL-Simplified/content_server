@@ -720,7 +720,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             # assist with COPPA restrictions.
             nav_feed = StaticCOPPANavigationFeed(
                 StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
-                full_lane, youth_lane
+                youth_lane, full_lane
             )
             feeds.append((StaticFeedCOPPAAnnotator.HOME_FILENAME, [unicode(nav_feed)]))
 

@@ -272,7 +272,7 @@ class StaticCOPPANavigationFeed(OPDSFeed):
             term=audience, label=audience, scheme='%saudience' % cls.SCHEMA_NS
         )
 
-    def __init__(self, title, base_url, full_lane, youth_lane):
+    def __init__(self, title, base_url, youth_lane, full_lane):
         """Turn a list of lanes into a feed."""
         annotator = StaticFeedCOPPAAnnotator(base_url)
         lane_url = annotator.default_lane_url()
