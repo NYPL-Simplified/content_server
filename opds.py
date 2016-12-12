@@ -112,6 +112,10 @@ class StaticFeedAnnotator(ContentServerAnnotator):
     # Feeds ordered by this facet will be considered the default.
     DEFAULT_ORDER = Facets.ORDER_TITLE
 
+    DEFAULT_LANE_ORDER = [
+        'Short Stories', 'Fiction', 'Nonfiction', 'Spanish', 'French'
+    ]
+
     @classmethod
     def slugify_feed_title(cls, feed_title):
         slug = re.sub('[.!@#\'$,]', '', feed_title.lower())
@@ -202,6 +206,46 @@ class StaticFeedAnnotator(ContentServerAnnotator):
     def lane_url(self, lane):
         return self.groups_url(lane)
 
+    def sort_works_for_groups_feed(self, works, lane_order=None):
+        """Sorts lanes_by_work by the preferred list order of lanes in
+        the feed
+        """
+        lane_order = lane_order or self.DEFAULT_LANE_ORDER
+
+        lane_names = set([])
+        for work, lanes in self.lanes_by_work.items():
+            for lane_dict in lanes:
+                lane = lane_dict['lane']
+                lane_names.add(lane.name)
+
+        missing_names = lane_names.difference(lane_order)
+        for name in missing_names:
+            # This is a lane that wasn't added to the preference
+            # list. Add it to the end so it can be sorted against
+            # without an error.
+            lane_order.append(name)
+
+        def sort_key(work):
+            lanes = [l.get('lane') for l in self.lanes_by_work[work]]
+            key = None
+            if len(lanes) > 1:
+                lanes_by_key = dict()
+                for lane in lanes:
+                    lane_key = lane_order.index(lane.name)
+                    lanes_by_key[lane_key] = lane
+                # Get the lowest key
+                key = sorted(lanes_by_key)[0]
+                lane = lanes_by_key[key]
+            else:
+                lane = lanes[0]
+                key = lane_order.index(lane.name)
+
+            if (lane.name.startswith('General ') or
+                lane.name.startswith('All ')):
+                # Force general lanes to the bottom of the feed.
+                return 50
+            return key
+        return sorted(works, key=sort_key)
 
     def annotate_feed(self, feed, lane):
         if self.include_search:
