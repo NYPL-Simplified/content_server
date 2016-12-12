@@ -57,6 +57,7 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         # Only the basic work information headers are included.
         expected = self.script.NONLANE_HEADERS[:]
         expected.remove('featured')
+        expected.remove('youth')
         all_headers = list()
         [all_headers.extend(r.keys()) for r in row_data]
         eq_(sorted(expected), sorted(set(all_headers)))
@@ -135,7 +136,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(2, len(self.uploader.content))
         for feed in self.uploader.content:
             parsed = feedparser.parse(feed)
-            eq_(u'mta.librarysimplified.org', parsed.feed.id)
+            eq_(u'mta.librarysimplified.org/index.xml', parsed.feed.id)
             eq_(StaticFeedAnnotator.TOP_LEVEL_LANE_NAME, parsed.feed.title)
 
             # There are links for the different facets.
@@ -272,7 +273,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
-        top_level = self.script.make_lanes_from_csv(csv_filename)[0]
+        top_level, _query, youth_lane = self.script.make_lanes_from_csv(csv_filename)
 
         def sublane_names(parent):
             return sorted([s.name for s in parent.sublanes])
@@ -285,6 +286,10 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             """
             [lane] = filter(lambda s: s.name==name, parent.sublanes)
             return lane
+
+        # None of the books have been marked for a youth lane, so
+        # there is no youth lane.
+        eq_(None, youth_lane)
 
         expected = sorted(['Fiction', 'Short Stories', 'Nonfiction'])
         eq_(expected, sublane_names(top_level))
@@ -331,6 +336,12 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(True, isinstance(result, StaticFeedBaseLane))
         eq_(3, len(result.identifiers))
 
+        # Works marked for a youth are returned in a youth lane.
+        csv_filename = os.path.abspath('tests/files/scripts/youth.csv')
+        result = self.script.make_lanes_from_csv(csv_filename)[2]
+        eq_(True, isinstance(result, StaticFeedBaseLane))
+        eq_(2, len(result.identifiers))
+
     def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
         alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
@@ -343,10 +354,9 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         lane = StaticFeedBaseLane(
             self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
+        annotator = StaticFeedAnnotator('https://mta.librarysimplified.org')
 
-        results = list(self.script.create_feeds(
-            [lane], 'https://mta.librarysimplified.org', 50
-        ))
+        results = list(self.script.create_feeds([lane], 50, annotator))
 
         eq_(2, len(results))
         eq_(['index', 'index_author'], sorted([r[0] for r in results]))
@@ -376,7 +386,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         lane = StaticFeedBaseLane(
             self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
-        facet = Facets('main', 'always', 'title')
+        facet = Facets('main', 'always', 'author')
         annotator = StaticFeedAnnotator('https://ls.org', lane)
 
         result = self.script.create_feed_pages(
@@ -394,7 +404,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(w1.author, entry.simplified_sort_name)
 
         [next_link] = links_by_rel(parsed, 'next')
-        eq_(next_link.href, 'https://ls.org/index_title_2.xml')
+        eq_(next_link.href, 'https://ls.org/index_author_2.xml')
         eq_([], links_by_rel(parsed, 'previous'))
         eq_([], links_by_rel(parsed, 'first'))
 
@@ -405,7 +415,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
         [previous_link] = links_by_rel(parsed, 'previous')
         [first_link] = links_by_rel(parsed, 'first')
-        first = 'https://ls.org/index_title.xml'
+        first = 'https://ls.org/index_author.xml'
         eq_(previous_link.href, first)
         eq_(first_link.href, first)
         eq_([], links_by_rel(parsed, 'next'))
