@@ -208,7 +208,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             OPDSFeed.add_link_to_feed(
                 feed.feed,
                 rel="search",
-                href=self.search_url,
+                href=self.search_url(),
                 type="application/opensearchdescription+xml")
 
 
