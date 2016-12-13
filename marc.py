@@ -24,6 +24,8 @@ class MARCExtractor(object):
 
     """Transform a MARC file into a list of Metadata objects."""
 
+    # Common things found in a MARC record after the name of the author
+    # which we sould like to remove.
     END_OF_AUTHOR_NAME_RES = [
         re.compile(",\s+[0-9]+-"), # Birth year
         re.compile(",\s+active "),
@@ -48,9 +50,7 @@ class MARCExtractor(object):
             links = []
             summary = record.notes()[0]['a']
 
-            if summary and not summary.startswith('"Recovering the Classics is'):
-                if summary.endswith("--Provided by publisher."):
-                    summary = summary[:-len("--Provided by publisher.")]
+            if summary:
                 summary_link = LinkData(
                     rel=Hyperlink.DESCRIPTION,
                     media_type=Representation.TEXT_PLAIN,
@@ -80,24 +80,9 @@ class MARCExtractor(object):
                         old_author = author
                         author = author[:match.start()]
                         break
-                if author.startswith(u"Bront\xe8e"):
-                    author = author.replace(u"\xe8e", u"ë")
-                if author == u'Gogol§, Nikolaæi Vasil§evich':
-                    author = "Gogol, Nikolai Vasilievich"
-                if author == u'Zola, \xe2Emile':
-                    author = u"Zola, Émile"
-                if author.startswith('Tolstoy, Leo, '):
-                    author = 'Tolstoy, Leo'
                 author_names = [author]
             else:
-                if title == 'The Federalist Papers':
-                    author_names = [
-                        'Hamilton, Alexander',
-                        'Madison, James',
-                        'Jay, John'
-                    ]
-                else:
-                    author_names = ['Anonymous']
+                author_names = ['Anonymous']
             contributors = [
                 ContributorData(
                     sort_name=author,
