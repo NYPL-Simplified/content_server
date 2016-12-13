@@ -167,7 +167,7 @@ class MakePresentationReadyScript(Script):
 class DirectoryImportScript(Script):
 
     def run(self, data_source_name, metadata_records, epub_directory, cover_directory):
-        replacement_policy = ReplacementPolicy(rights=True, links=True, formats=True)
+        replacement_policy = ReplacementPolicy(rights=True, links=True, formats=True, contributions=True)
         for metadata in metadata_records:
             primary_identifier = metadata.primary_identifier
 
@@ -209,6 +209,12 @@ class DirectoryImportScript(Script):
                 media_type=Representation.JPEG_MEDIA_TYPE,
             ))
 
+            if not os.path.exists(cover_path) and not os.path.exists(epub_path):
+                print "Skipping %s/%s: Neither cover nor epub found on disk, skipping." % (
+                    metadata.title, primary_identifier
+                )
+                continue
+
             edition, new = metadata.edition(self._db)
             metadata.apply(edition, replace=replacement_policy)
             pool = get_one(self._db, LicensePool, identifier=edition.primary_identifier)
@@ -236,10 +242,10 @@ class DirectoryImportScript(Script):
                             )
                             uploader.mirror_one(thumbnail)
                     except ValueError, e:
-                        print "Failed to mirror file %s" % representation.local_content_path
-
+                        print "Failed to mirror file %s" % representation.local_content_path, e
             work, ignore = pool.calculate_work()
             work.set_presentation_ready()
+            print "FINALIZED %s/%s/%s" % (work.title, work.author, work.sort_author)
             self._db.commit()
 
 
