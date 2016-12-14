@@ -8,7 +8,7 @@ nose
 lxml
 flask
 isbnlib
-tinys3
+tinys3==0.1.11
 textblob
 rdflib
 elasticsearch

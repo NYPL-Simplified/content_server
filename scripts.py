@@ -672,6 +672,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
             help='The number of entries in each page feed'
         )
         parser.add_argument(
+            '--prefix', help='A string to prepend the feed filenames (e.g. "demo/")'
+        )
+        parser.add_argument(
             '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
         )
         parser.add_argument(
@@ -716,20 +719,28 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
         feeds = list()
         if youth_lane:
-            # When a youth lane exists, we create a navigation feed the
+            # When a youth lane exists, we create a navigation feed to
             # assist with COPPA restrictions.
             nav_feed = StaticCOPPANavigationFeed(
                 StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
-                youth_lane, full_lane
+                youth_lane, full_lane, prefix=parsed.prefix
             )
-            feeds.append((StaticFeedCOPPAAnnotator.HOME_FILENAME, [unicode(nav_feed)]))
+            prefix = parsed.prefix or ''
+            feeds.append((
+                prefix + StaticFeedCOPPAAnnotator.HOME_FILENAME,
+                [unicode(nav_feed)]
+            ))
 
-            annotator = StaticFeedCOPPAAnnotator(feed_id, youth_lane, include_search=search)
+            annotator = StaticFeedCOPPAAnnotator(
+                feed_id, youth_lane, include_search=search, prefix=parsed.prefix
+            )
             youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
             feeds += youth_feeds
         else:
             # Without a youth feed, we don't need to create a navigation feed.
-            annotator = StaticFeedAnnotator(feed_id, full_lane, include_search=search)
+            annotator = StaticFeedAnnotator(
+                feed_id, full_lane, include_search=search, prefix=parsed.prefix
+            )
 
         feeds += list(self.create_feeds([full_lane], page_size, annotator))
 
@@ -945,7 +956,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
         for lane in lanes:
             annotator.reset(lane)
-            filename = annotator.lane_filename(lane)
+            filename = annotator.lane_filename()
             url = annotator.lane_url(lane)
             if lane.sublanes:
                 # This is an intermediate lane, without its own works.

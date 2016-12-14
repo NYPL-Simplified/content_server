@@ -123,25 +123,11 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         slug = re.sub(' {2,}', ' ', slug)
         return unicode('-'.join(slug.split(' ')))
 
-    @classmethod
-    def lane_filename(cls, lane):
-        if lane.name == cls.TOP_LEVEL_LANE_NAME:
-            # This is the home lane.
-            return cls.HOME_FILENAME
-
-        if not lane.parent:
-            return cls.slugify_feed_title(lane.name)
-
-        path = list()
-        while lane.parent:
-            path.insert(0, cls.slugify_feed_title(lane.name))
-            lane = lane.parent
-        return '_'.join(path)
-
-    def __init__(self, base_url, lane=None, include_search=None):
+    def __init__(self, base_url, lane=None, include_search=None, prefix=None):
         if not base_url.endswith('/'):
             base_url += '/'
         self.base_url = base_url
+        self.prefix = prefix or ''
         self.lane = lane
         self.include_search = include_search
         self.lanes_by_work = defaultdict(list)
@@ -151,10 +137,29 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         self.lane = lane
 
     def default_lane_url(self):
-        return self.base_url + self.HOME_FILENAME + '.xml'
+        return self.base_url + self.prefix + self.HOME_FILENAME + '.xml'
 
     def search_url(self):
         return self.base_url + 'search'
+
+    def lane_filename(self, lane=None):
+        lane = lane or self.lane
+        if lane.name == self.TOP_LEVEL_LANE_NAME:
+            # This is the home lane.
+            # Could be a COPPA navigation feed or an "All Books" lane
+            # if a there aren't feeds for multiple age groups.
+            return self.prefix + self.HOME_FILENAME
+
+        if not lane.parent:
+            # When there is a COPPA navigation feed, this creates a
+            # filename for the top of the youth and adult feeds.
+            return self.prefix + self.slugify_feed_title(lane.name)
+
+        path = list()
+        while lane.parent:
+            path.insert(0, self.slugify_feed_title(lane.name))
+            lane = lane.parent
+        return self.prefix + '_'.join(path)
 
     def filename_facet_segment(self, facets):
         ordered_by = list(facets.items())[0][1]
@@ -172,7 +177,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
                 "StaticFeedAnnotator can't create a facet URL without"\
                 " a selected lane."
             )
-        filename = self.lane_filename(self.lane)
+        filename = self.lane_filename()
         filename += self.filename_facet_segment(facets)
         return self.base_url + filename + '.xml'
 
@@ -316,9 +321,9 @@ class StaticCOPPANavigationFeed(OPDSFeed):
             term=audience, label=audience, scheme='%saudience' % cls.SCHEMA_NS
         )
 
-    def __init__(self, title, base_url, youth_lane, full_lane):
+    def __init__(self, title, base_url, youth_lane, full_lane, prefix=None):
         """Turn a list of lanes into a feed."""
-        annotator = StaticFeedCOPPAAnnotator(base_url)
+        annotator = StaticFeedCOPPAAnnotator(base_url, prefix=prefix)
         lane_url = annotator.default_lane_url()
 
         super(StaticCOPPANavigationFeed, self).__init__(title, lane_url)
