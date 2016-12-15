@@ -177,15 +177,12 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         result = [rep.mirror_url for rep in self.uploader.uploaded]
         eq_(sorted(expected), sorted(result))
 
-    def test_run_with_csv(self):
-        # An incorrect CSV document raises a ValueError when there are
-        # also no URNs present.
-        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
-        assert_raises(
-            ValueError, self.script.run, uploader=self.uploader,
-            cmd_args=cmd_args
-        )
+    def run_mini_csv(self, *args):
+        """Performs prepatory work for testing by running the smaller mini.csv
+        file with appropriately identified works.
 
+        :return: 4 Works that can be used for testing purposes.
+        """
         works = [self._work(with_open_access_download=True) for _ in range(4)]
         [w1, w2, w3, w4] = works
         csv_isbns = ['9781682280065', '9781682280027', '9781682280010', '9781682280058']
@@ -195,10 +192,23 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             identifier.identifier = csv_isbns[idx]
         self._db.commit()
 
-        # With a proper CSV file, we get results.
         url = 'https://ls.org'
         cmd_args = ['tests/files/scripts/mini.csv', '-d', url, '-u']
+        cmd_args += args
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+        return w1, w2, w3, w4
+
+    def test_run_with_csv(self):
+        # An incorrect CSV document raises a ValueError when there are
+        # also no URNs present.
+        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
+        assert_raises(
+            ValueError, self.script.run, uploader=self.uploader,
+            cmd_args=cmd_args
+        )
+
+        # With a proper CSV file, we get results.
+        w1, w2, w3, w4 = self.run_mini_csv()
 
         # Nine feeds are created with the filenames we'd expect.
         eq_(9, len(self.uploader.content))
@@ -235,7 +245,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(4, len(index.entries))
 
         # It's a grouped feed with proper collection links.
-        expected = [url+'/'+f+'.xml' for f in ['fiction', 'nonfiction']]
+        expected = ['https://ls.org/'+f+'.xml' for f in ['fiction', 'nonfiction']]
         eq_(sorted(set(expected)), sorted(collection_links(index)))
 
         # Other intermediate lanes also have collection_links.
@@ -269,6 +279,18 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(w3.title, entry.title)
         eq_(w3.author, entry.simplified_sort_name)
         assert has_facet_links(sonnets)
+
+    def test_run_with_prefix(self):
+        prefix_args = ['--prefix', 'testing/']
+        self.run_mini_csv(*prefix_args)
+        representations = self._db.query(Representation).filter(
+            Representation.mirror_url.like(self.uploader.static_feed_root()+'%')
+        ).all()
+
+        eq_(9, len(representations))
+        for r in representations:
+            # The prefix has been inserted into the mirror url.
+            r.mirror_url.startswith('https://ls.org/testing/')
 
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
