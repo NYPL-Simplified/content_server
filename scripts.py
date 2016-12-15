@@ -764,7 +764,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 upload_files.append((filename, content))
 
         if parsed.upload:
-            representations, uploader = self.create_representations(upload_files)
+            representations, uploader = self.create_representations(upload_files, uploader=uploader)
             uploader.mirror_batch(representations)
         else:
             for filename, content in upload_files:

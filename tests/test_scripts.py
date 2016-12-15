@@ -15,7 +15,6 @@ from ..core.lane import (
     Pagination,
 )
 from ..core.model import (
-    CachedFeed,
     Edition,
     Identifier,
     LicensePool,
@@ -361,8 +360,8 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(2, len(results))
         eq_(['index', 'index_author'], sorted([r[0] for r in results]))
         for filename, [feed] in results:
-            eq_(True, isinstance(feed, CachedFeed))
-            parsed = feedparser.parse(feed.content)
+            eq_(True, isinstance(feed, unicode))
+            parsed = feedparser.parse(feed)
             [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
             if filename == 'index':
                 # The entries are sorted by title, by default.
@@ -398,7 +397,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         def links_by_rel(parsed_feed, rel):
             return [l for l in parsed_feed.feed.links if l['rel']==rel]
 
-        parsed = feedparser.parse(first.content)
+        parsed = feedparser.parse(first)
         [entry] = parsed.entries
         eq_(w1.title, entry.title)
         eq_(w1.author, entry.simplified_sort_name)
@@ -408,7 +407,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_([], links_by_rel(parsed, 'previous'))
         eq_([], links_by_rel(parsed, 'first'))
 
-        parsed = feedparser.parse(second.content)
+        parsed = feedparser.parse(second)
         [entry] = parsed.entries
         eq_(w2.title, entry.title)
         eq_(w2.author, entry.simplified_sort_name)
