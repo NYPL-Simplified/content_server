@@ -741,9 +741,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
             annotator = StaticFeedAnnotator(
                 feed_id, full_lane, include_search=search, prefix=parsed.prefix
             )
-
         feeds += list(self.create_feeds([full_lane], page_size, annotator))
 
+        upload_files = list()
         for base_filename, feed_pages in feeds:
             for index, page in enumerate(feed_pages):
                 filename = base_filename
@@ -755,13 +755,17 @@ class StaticFeedGenerationScript(StaticFeedScript):
                     # This is a CachedFeed, so extract the feed string.
                     content = page.content
 
-                if parsed.upload:
-                    self.upload(filename, content, uploader=uploader)
-                else:
-                    filename = os.path.abspath(filename + '.xml')
-                    with open(filename, 'w') as f:
-                        f.write(content)
-                    self.log.info("OPDS feed saved locally at %s", filename)
+                upload_files.append((filename, content))
+
+        if parsed.upload:
+            representations, uploader = self.create_representations(upload_files)
+            uploader.mirror_batch(representations)
+        else:
+            for filename, content in upload_files:
+                filename = os.path.abspath(filename + '.xml')
+                with open(filename, 'w') as f:
+                    f.write(content)
+                self.log.info("OPDS feed saved locally at %s", filename)
 
         if parsed.search_url and parsed.search_index:
             search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
@@ -965,7 +969,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
                     self._db, lane.name, url, lane, annotator,
                     cache_type=self.CACHE_TYPE,
                     force_refresh=True,
-                    use_materialized_works=False
+                    use_materialized_works=False,
+                    use_cache=False
                 )
                 yield filename, [feed]
 
@@ -998,7 +1003,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         """Yields each page of the feed for a particular lane."""
         pages = list()
         previous_page = pagination.previous_page
-        while not previous_page or previous_page.has_next_page:
+        while (not previous_page) or previous_page.has_next_page:
             page = AcquisitionFeed.page(
                 self._db, lane.name, lane_url, lane,
                 annotator=annotator,
@@ -1006,7 +1011,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 pagination=pagination,
                 cache_type=self.CACHE_TYPE,
                 force_refresh=True,
-                use_materialized_works=False
+                use_materialized_works=False,
+                use_cache=False
             )
             pages.append(page)
 
@@ -1015,13 +1021,19 @@ class StaticFeedGenerationScript(StaticFeedScript):
             pagination = pagination.next_page
         return pages
 
-    def upload(self, filename, content, uploader=None):
+    def create_representations(self, upload_files, uploader=None):
         uploader = uploader or S3Uploader()
-        feed_representation = Representation()
-
-        feed_representation.set_fetched_content(content, content_path=filename)
-        feed_representation.mirror_url = uploader.feed_url(filename)
-
-        self._db.add(feed_representation)
+        representations = list()
+        for filename, content in upload_files:
+            if not content:
+                set_trace()
+            feed_representation = get_one_or_create(
+                self._db, Representation,
+                mirror_url=uploader.feed_url(filename),
+                on_multiple='interchangeable'
+            )[0]
+            feed_representation.set_fetched_content(content, content_path=filename)
+            representations.append(feed_representation)
         self._db.commit()
-        uploader.mirror_one(feed_representation)
+
+        return representations, uploader
