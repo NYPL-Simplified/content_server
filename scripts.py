@@ -760,7 +760,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 upload_files.append((filename, content))
 
         if parsed.upload:
-            representations, uploader = self.create_representations(upload_files, uploader=uploader)
+            uploader = uploader or S3Uploader()
+            upload_files = [[f, c, uploader.feed_url(f)] for f, c in upload_files]
+            representations = self.create_representations(upload_files)
             uploader.mirror_batch(representations)
         else:
             for filename, content in upload_files:
@@ -1030,17 +1032,16 @@ class StaticFeedGenerationScript(StaticFeedScript):
             pagination = pagination.next_page
         return pages
 
-    def create_representations(self, upload_files, uploader=None):
-        uploader = uploader or S3Uploader()
+    def create_representations(self, upload_files):
         representations = list()
-        for filename, content in upload_files:
+        for filename, content, mirror_url in upload_files:
             feed_representation = get_one_or_create(
                 self._db, Representation,
-                mirror_url=uploader.feed_url(filename),
+                mirror_url=mirror_url,
                 on_multiple='interchangeable'
             )[0]
             feed_representation.set_fetched_content(content, content_path=filename)
             representations.append(feed_representation)
         self._db.commit()
 
-        return representations, uploader
+        return representations
