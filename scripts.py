@@ -254,6 +254,8 @@ class StaticFeedScript(Script):
     # Identifies csv headers that are not considered titles for lanes.
     NONLANE_HEADERS = ['urn', 'title', 'author', 'epub', 'featured', 'youth']
 
+    LANGUAGES = LanguageCodes.english_names_to_three.keys()
+
     @classmethod
     def header_to_path(cls, header):
         return [name.strip() for name in header.split('>')]
@@ -364,8 +366,6 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                     current = new
 
     FICTIONALITY = ['fiction', 'nonfiction']
-
-    LANGUAGES = LanguageCodes.english_names_to_three.keys()
 
     SUBJECTS = ['Short Stories']
 
@@ -656,10 +656,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
         ]
     }
 
-    # Static feeds are refreshed each time they're created, so this
-    # type is primarily just to distinguish them in the database.
-    CACHE_TYPE = u'static'
-
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
@@ -936,6 +932,15 @@ class StaticFeedGenerationScript(StaticFeedScript):
         base_lane.parent = target
         target.sublanes.add(base_lane)
 
+        # Identify and set any languages on lanes with language names.
+        ancestors = [base_lane] + base_lane.visible_ancestors()
+        for idx, ancestor in enumerate(ancestors[:]):
+            name = ancestor.name.lower()
+            if name in self.LANGUAGES:
+                language = LanguageCodes.english_names_to_three[name]
+                for a in ancestors[:idx+1]:
+                    a.languages = [language]
+
     def empty_lane(self, name=None, parent=None):
         """Creates a Work-less StaticFeedParentLane, either for the top
         level or somewhere along a Lane tree / path.
@@ -954,7 +959,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             return StaticFeedParentLane(
                 self._db, name,
                 parent=parent,
-                include_all=False,
+                include_all=False
             )
 
     def create_feeds(self, lanes, page_size, annotator):
@@ -973,10 +978,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 # It needs a groups feed.
                 feed = AcquisitionFeed.groups(
                     self._db, lane.name, url, lane, annotator,
-                    cache_type=self.CACHE_TYPE,
+                    cache_type=AcquisitionFeed.NO_CACHE,
                     force_refresh=True,
                     use_materialized_works=False,
-                    use_cache=False
                 )
                 yield filename, [feed]
 
@@ -1015,10 +1019,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 annotator=annotator,
                 facets=facet,
                 pagination=pagination,
-                cache_type=self.CACHE_TYPE,
+                cache_type=AcquisitionFeed.NO_CACHE,
                 force_refresh=True,
-                use_materialized_works=False,
-                use_cache=False
+                use_materialized_works=False
             )
             pages.append(page)
 
@@ -1031,8 +1034,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
         uploader = uploader or S3Uploader()
         representations = list()
         for filename, content in upload_files:
-            if not content:
-                set_trace()
             feed_representation = get_one_or_create(
                 self._db, Representation,
                 mirror_url=uploader.feed_url(filename),

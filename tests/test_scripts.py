@@ -363,6 +363,19 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(True, isinstance(result, StaticFeedBaseLane))
         eq_(2, len(result.identifiers))
 
+        # If the CSV includes non-English lanes, those lanes are given the
+        # proper languages.
+        csv_filename = os.path.abspath('tests/files/scripts/languages.csv')
+        top_level = self.script.make_lanes_from_csv(csv_filename)[0]
+        eq_(None, top_level.languages)
+
+        expected = dict(Fiction=None, German=['ger'], Spanish=['spa'], French=['fre'])
+
+        for lane in top_level.sublanes:
+            eq_(expected[lane.name], lane.languages)
+            for sublane in lane.sublanes:
+                eq_(expected[lane.name], sublane.languages)
+
     def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
         alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
