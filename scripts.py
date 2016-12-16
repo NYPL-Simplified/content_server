@@ -981,7 +981,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 feed = AcquisitionFeed.groups(
                     self._db, lane.name, url, lane, annotator,
                     cache_type=AcquisitionFeed.NO_CACHE,
-                    force_refresh=True,
                     use_materialized_works=False,
                 )
                 yield filename, [feed]
@@ -1022,7 +1021,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 facets=facet,
                 pagination=pagination,
                 cache_type=AcquisitionFeed.NO_CACHE,
-                force_refresh=True,
                 use_materialized_works=False
             )
             pages.append(page)
