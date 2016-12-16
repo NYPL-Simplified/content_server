@@ -15,7 +15,6 @@ from ..core.lane import (
     Pagination,
 )
 from ..core.model import (
-    CachedFeed,
     Edition,
     Identifier,
     LicensePool,
@@ -178,15 +177,12 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         result = [rep.mirror_url for rep in self.uploader.uploaded]
         eq_(sorted(expected), sorted(result))
 
-    def test_run_with_csv(self):
-        # An incorrect CSV document raises a ValueError when there are
-        # also no URNs present.
-        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
-        assert_raises(
-            ValueError, self.script.run, uploader=self.uploader,
-            cmd_args=cmd_args
-        )
+    def run_mini_csv(self, *args):
+        """Performs prepatory work for testing by running the smaller mini.csv
+        file with appropriately identified works.
 
+        :return: 4 Works that can be used for testing purposes.
+        """
         works = [self._work(with_open_access_download=True) for _ in range(4)]
         [w1, w2, w3, w4] = works
         csv_isbns = ['9781682280065', '9781682280027', '9781682280010', '9781682280058']
@@ -196,10 +192,23 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             identifier.identifier = csv_isbns[idx]
         self._db.commit()
 
-        # With a proper CSV file, we get results.
         url = 'https://ls.org'
         cmd_args = ['tests/files/scripts/mini.csv', '-d', url, '-u']
+        cmd_args += args
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+        return w1, w2, w3, w4
+
+    def test_run_with_csv(self):
+        # An incorrect CSV document raises a ValueError when there are
+        # also no URNs present.
+        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
+        assert_raises(
+            ValueError, self.script.run, uploader=self.uploader,
+            cmd_args=cmd_args
+        )
+
+        # With a proper CSV file, we get results.
+        w1, w2, w3, w4 = self.run_mini_csv()
 
         # Nine feeds are created with the filenames we'd expect.
         eq_(9, len(self.uploader.content))
@@ -236,7 +245,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(4, len(index.entries))
 
         # It's a grouped feed with proper collection links.
-        expected = [url+'/'+f+'.xml' for f in ['fiction', 'nonfiction']]
+        expected = ['https://ls.org/'+f+'.xml' for f in ['fiction', 'nonfiction']]
         eq_(sorted(set(expected)), sorted(collection_links(index)))
 
         # Other intermediate lanes also have collection_links.
@@ -270,6 +279,18 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(w3.title, entry.title)
         eq_(w3.author, entry.simplified_sort_name)
         assert has_facet_links(sonnets)
+
+    def test_run_with_prefix(self):
+        prefix_args = ['--prefix', 'testing/']
+        self.run_mini_csv(*prefix_args)
+        representations = self._db.query(Representation).filter(
+            Representation.mirror_url.like(self.uploader.static_feed_root()+'%')
+        ).all()
+
+        eq_(9, len(representations))
+        for r in representations:
+            # The prefix has been inserted into the mirror url.
+            r.mirror_url.startswith('https://ls.org/testing/')
 
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
@@ -342,6 +363,19 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(True, isinstance(result, StaticFeedBaseLane))
         eq_(2, len(result.identifiers))
 
+        # If the CSV includes non-English lanes, those lanes are given the
+        # proper languages.
+        csv_filename = os.path.abspath('tests/files/scripts/languages.csv')
+        top_level = self.script.make_lanes_from_csv(csv_filename)[0]
+        eq_(None, top_level.languages)
+
+        expected = dict(Fiction=None, German=['ger'], Spanish=['spa'], French=['fre'])
+
+        for lane in top_level.sublanes:
+            eq_(expected[lane.name], lane.languages)
+            for sublane in lane.sublanes:
+                eq_(expected[lane.name], sublane.languages)
+
     def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
         alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
@@ -361,8 +395,8 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_(2, len(results))
         eq_(['index', 'index_author'], sorted([r[0] for r in results]))
         for filename, [feed] in results:
-            eq_(True, isinstance(feed, CachedFeed))
-            parsed = feedparser.parse(feed.content)
+            eq_(True, isinstance(feed, unicode))
+            parsed = feedparser.parse(feed)
             [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
             if filename == 'index':
                 # The entries are sorted by title, by default.
@@ -398,7 +432,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         def links_by_rel(parsed_feed, rel):
             return [l for l in parsed_feed.feed.links if l['rel']==rel]
 
-        parsed = feedparser.parse(first.content)
+        parsed = feedparser.parse(first)
         [entry] = parsed.entries
         eq_(w1.title, entry.title)
         eq_(w1.author, entry.simplified_sort_name)
@@ -408,7 +442,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         eq_([], links_by_rel(parsed, 'previous'))
         eq_([], links_by_rel(parsed, 'first'))
 
-        parsed = feedparser.parse(second.content)
+        parsed = feedparser.parse(second)
         [entry] = parsed.entries
         eq_(w2.title, entry.title)
         eq_(w2.author, entry.simplified_sort_name)

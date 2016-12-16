@@ -40,13 +40,53 @@ class TestAnnotator(DatabaseTest):
         )
 
 
-class TestStaticFeedAnnotator(object):
+class TestStaticFeedAnnotator(DatabaseTest):
 
     def test_slugify_feed_title(self):
         annotator = StaticFeedAnnotator
         eq_('hey-im-a-feed', annotator.slugify_feed_title("Hey! I'm a feed!!"))
         eq_('you-and-me-n-every_feed', annotator.slugify_feed_title("You & Me n Every_Feed"))
         eq_('money-honey', annotator.slugify_feed_title("Money $$$       Honey"))
+
+    def test_prefix(self):
+
+        annotator = StaticFeedAnnotator('test.org', prefix='demo/')
+        eq_('test.org/demo/index.xml', annotator.default_lane_url())
+
+        lane = MockStaticLane('Parliament Funkadelic')
+        eq_('demo/parliament-funkadelic', annotator.lane_filename(lane))
+        eq_('test.org/demo/parliament-funkadelic.xml', annotator.groups_url(lane))
+
+        # The prefix doesn't impact the search URL. (Mainly because we
+        # use AWS lambda for Instant Classics search at the moment, and
+        # there hasn't been an example of another case yet.)
+        eq_('test.org/search', annotator.search_url())
+
+    def test_sort_works_for_groups_feed(self):
+        spanish = MockStaticLane('Spanish')
+        nonfic = MockStaticLane('Nonfiction')
+        shorts = MockStaticLane('Short Stories')
+        whatever = MockStaticLane('Whatever')
+
+        annotator = StaticFeedAnnotator('test.org')
+
+        works = list()
+        for lane in [spanish, nonfic, shorts, whatever]:
+            w = self._work()
+            works.append(w)
+            annotator.lanes_by_work[w] = [dict(lane=lane)]
+        w1, w2, w3, w4 = works
+
+        result = annotator.sort_works_for_groups_feed(works)
+        # Works are sorted by the priority of their lane names.
+        eq_([w3, w2, w1, w4], result)
+
+        # If a work is featured by multiple lanes, it is sorted
+        # accoridng to the highest-priority lane.
+        fic = MockStaticLane('Fiction')
+        annotator.lanes_by_work[w4].append(dict(lane=fic))
+        result = annotator.sort_works_for_groups_feed(works)
+        eq_([w3, w4, w2, w1], result)
 
 
 class TestStaticCOPPANavigationFeed(object):

@@ -254,6 +254,8 @@ class StaticFeedScript(Script):
     # Identifies csv headers that are not considered titles for lanes.
     NONLANE_HEADERS = ['urn', 'title', 'author', 'epub', 'featured', 'youth']
 
+    LANGUAGES = LanguageCodes.english_names_to_three.keys()
+
     @classmethod
     def header_to_path(cls, header):
         return [name.strip() for name in header.split('>')]
@@ -364,8 +366,6 @@ class StaticFeedCSVExportScript(StaticFeedScript):
                     current = new
 
     FICTIONALITY = ['fiction', 'nonfiction']
-
-    LANGUAGES = LanguageCodes.english_names_to_three.keys()
 
     SUBJECTS = ['Short Stories']
 
@@ -656,10 +656,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
         ]
     }
 
-    # Static feeds are refreshed each time they're created, so this
-    # type is primarily just to distinguish them in the database.
-    CACHE_TYPE = u'static'
-
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
@@ -676,6 +672,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
         parser.add_argument(
             '--page-size', type=int, default=Pagination.DEFAULT_SIZE,
             help='The number of entries in each page feed'
+        )
+        parser.add_argument(
+            '--prefix', help='A string to prepend the feed filenames (e.g. "demo/")'
         )
         parser.add_argument(
             '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
@@ -722,23 +721,31 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
         feeds = list()
         if youth_lane:
-            # When a youth lane exists, we create a navigation feed the
+            # When a youth lane exists, we create a navigation feed to
             # assist with COPPA restrictions.
             nav_feed = StaticCOPPANavigationFeed(
                 StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
-                youth_lane, full_lane
+                youth_lane, full_lane, prefix=parsed.prefix
             )
-            feeds.append((StaticFeedCOPPAAnnotator.HOME_FILENAME, [unicode(nav_feed)]))
+            prefix = parsed.prefix or ''
+            feeds.append((
+                prefix + StaticFeedCOPPAAnnotator.HOME_FILENAME,
+                [unicode(nav_feed)]
+            ))
 
-            annotator = StaticFeedCOPPAAnnotator(feed_id, youth_lane, include_search=search)
+            annotator = StaticFeedCOPPAAnnotator(
+                feed_id, youth_lane, include_search=search, prefix=parsed.prefix
+            )
             youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
             feeds += youth_feeds
         else:
             # Without a youth feed, we don't need to create a navigation feed.
-            annotator = StaticFeedAnnotator(feed_id, full_lane, include_search=search)
-
+            annotator = StaticFeedAnnotator(
+                feed_id, full_lane, include_search=search, prefix=parsed.prefix
+            )
         feeds += list(self.create_feeds([full_lane], page_size, annotator))
 
+        upload_files = list()
         for base_filename, feed_pages in feeds:
             for index, page in enumerate(feed_pages):
                 filename = base_filename
@@ -750,13 +757,19 @@ class StaticFeedGenerationScript(StaticFeedScript):
                     # This is a CachedFeed, so extract the feed string.
                     content = page.content
 
-                if parsed.upload:
-                    self.upload(filename, content, uploader=uploader)
-                else:
-                    filename = os.path.abspath(filename + '.xml')
-                    with open(filename, 'w') as f:
-                        f.write(content)
-                    self.log.info("OPDS feed saved locally at %s", filename)
+                upload_files.append((filename, content))
+
+        if parsed.upload:
+            uploader = uploader or S3Uploader()
+            upload_files = [[f, c, uploader.feed_url(f)] for f, c in upload_files]
+            representations = self.create_representations(upload_files)
+            uploader.mirror_batch(representations)
+        else:
+            for filename, content in upload_files:
+                filename = os.path.abspath(filename + '.xml')
+                with open(filename, 'w') as f:
+                    f.write(content)
+                self.log.info("OPDS feed saved locally at %s", filename)
 
         if parsed.search_url and parsed.search_index:
             search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
@@ -921,6 +934,15 @@ class StaticFeedGenerationScript(StaticFeedScript):
         base_lane.parent = target
         target.sublanes.add(base_lane)
 
+        # Identify and set any languages on lanes with language names.
+        ancestors = [base_lane] + base_lane.visible_ancestors()
+        for idx, ancestor in enumerate(ancestors[:]):
+            name = ancestor.name.lower()
+            if name in self.LANGUAGES:
+                language = LanguageCodes.english_names_to_three[name]
+                for a in ancestors[:idx+1]:
+                    a.languages = [language]
+
     def empty_lane(self, name=None, parent=None):
         """Creates a Work-less StaticFeedParentLane, either for the top
         level or somewhere along a Lane tree / path.
@@ -939,7 +961,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             return StaticFeedParentLane(
                 self._db, name,
                 parent=parent,
-                include_all=False,
+                include_all=False
             )
 
     def create_feeds(self, lanes, page_size, annotator):
@@ -951,16 +973,15 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
         for lane in lanes:
             annotator.reset(lane)
-            filename = annotator.lane_filename(lane)
+            filename = annotator.lane_filename()
             url = annotator.lane_url(lane)
             if lane.sublanes:
                 # This is an intermediate lane, without its own works.
                 # It needs a groups feed.
                 feed = AcquisitionFeed.groups(
                     self._db, lane.name, url, lane, annotator,
-                    cache_type=self.CACHE_TYPE,
-                    force_refresh=True,
-                    use_materialized_works=False
+                    cache_type=AcquisitionFeed.NO_CACHE,
+                    use_materialized_works=False,
                 )
                 yield filename, [feed]
 
@@ -993,14 +1014,13 @@ class StaticFeedGenerationScript(StaticFeedScript):
         """Yields each page of the feed for a particular lane."""
         pages = list()
         previous_page = pagination.previous_page
-        while not previous_page or previous_page.has_next_page:
+        while (not previous_page) or previous_page.has_next_page:
             page = AcquisitionFeed.page(
                 self._db, lane.name, lane_url, lane,
                 annotator=annotator,
                 facets=facet,
                 pagination=pagination,
-                cache_type=self.CACHE_TYPE,
-                force_refresh=True,
+                cache_type=AcquisitionFeed.NO_CACHE,
                 use_materialized_works=False
             )
             pages.append(page)
@@ -1010,13 +1030,16 @@ class StaticFeedGenerationScript(StaticFeedScript):
             pagination = pagination.next_page
         return pages
 
-    def upload(self, filename, content, uploader=None):
-        uploader = uploader or S3Uploader()
-        feed_representation = Representation()
-
-        feed_representation.set_fetched_content(content, content_path=filename)
-        feed_representation.mirror_url = uploader.feed_url(filename)
-
-        self._db.add(feed_representation)
+    def create_representations(self, upload_files):
+        representations = list()
+        for filename, content, mirror_url in upload_files:
+            feed_representation = get_one_or_create(
+                self._db, Representation,
+                mirror_url=mirror_url,
+                on_multiple='interchangeable'
+            )[0]
+            feed_representation.set_fetched_content(content, content_path=filename)
+            representations.append(feed_representation)
         self._db.commit()
-        uploader.mirror_one(feed_representation)
+
+        return representations

@@ -35,6 +35,35 @@ class S3Uploader(BaseS3Uploader):
             filename += extension
         return root + filename
 
+    def delete_batch(self, keys, _db=None):
+        """Deletes files identified by their keys (i.e. mirror urls)
+        from s3 bucket and--if a database session is provided--their
+        saved Representations.
+
+        This method is intended for utility use.
+        """
+        requests = list()
+        if _db:
+            from model import Representation, get_one
+            for key in keys:
+                representation = get_one(_db, Representation, mirror_url=unicode(key))
+                if representation:
+                    logging.info("DELETED Representation for %s" % key)
+                    _db.delete(representation)
+            _db.commit()
+
+        for key in keys:
+            bucket, key = self.bucket_and_filename(key)
+            requests.append(self.pool.delete(key, bucket))
+
+        for response in self.pool.all_completed(requests):
+            if response.status_code / 100 == 2:
+                logging.info("DELETED S3 file %s" % response.request.url)
+            else:
+                status = response.status_code
+                url = response.request.url
+                logging.error("ERROR deleting file %s. Status code: %d", url, status)
+
 
 class DummyS3Uploader(BaseDummyS3Uploader, S3Uploader):
 
