@@ -292,6 +292,21 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             # The prefix has been inserted into the mirror url.
             r.mirror_url.startswith('https://ls.org/testing/')
 
+    def test_run_with_license_link(self):
+        license_url = 'https://ls.org/license.html'
+        license_args = ['--license', license_url]
+
+        self.run_mini_csv(*license_args)
+        representations = self._db.query(Representation).filter(
+            Representation.mirror_url.like(self.uploader.static_feed_root()+'%')
+        ).all()
+
+        for r in representations:
+            feed = feedparser.parse(r.content)
+            [license_link] = [l for l in feed.feed.links if l.rel == 'license']
+            eq_(license_url, license_link.href)
+            eq_('text/html', license_link.type)
+
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
         top_level, _query, youth_lane = self.script.make_lanes_from_csv(csv_filename)
