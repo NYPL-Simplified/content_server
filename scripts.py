@@ -677,6 +677,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
             '--prefix', help='A string to prepend the feed filenames (e.g. "demo/")'
         )
         parser.add_argument(
+            '--license', help='The url location of the licensing document for this feed'
+        )
+        parser.add_argument(
             '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
         )
         parser.add_argument(
@@ -725,7 +728,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
             # assist with COPPA restrictions.
             nav_feed = StaticCOPPANavigationFeed(
                 StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
-                youth_lane, full_lane, prefix=parsed.prefix
+                youth_lane, full_lane,
+                prefix=parsed.prefix,
+                license_link=parsed.license
             )
             prefix = parsed.prefix or ''
             feeds.append((
@@ -734,14 +739,20 @@ class StaticFeedGenerationScript(StaticFeedScript):
             ))
 
             annotator = StaticFeedCOPPAAnnotator(
-                feed_id, youth_lane, include_search=search, prefix=parsed.prefix
+                feed_id, youth_lane,
+                prefix=parsed.prefix,
+                include_search=search,
+                license_link=parsed.license
             )
             youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
             feeds += youth_feeds
         else:
             # Without a youth feed, we don't need to create a navigation feed.
             annotator = StaticFeedAnnotator(
-                feed_id, full_lane, include_search=search, prefix=parsed.prefix
+                feed_id, full_lane,
+                prefix=parsed.prefix,
+                include_search=search,
+                license_link=parsed.license
             )
         feeds += list(self.create_feeds([full_lane], page_size, annotator))
 

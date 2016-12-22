@@ -123,13 +123,15 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         slug = re.sub(' {2,}', ' ', slug)
         return unicode('-'.join(slug.split(' ')))
 
-    def __init__(self, base_url, lane=None, include_search=None, prefix=None):
+    def __init__(self, base_url, lane=None, prefix=None, include_search=None,
+                 license_link=None):
         if not base_url.endswith('/'):
             base_url += '/'
         self.base_url = base_url
         self.prefix = prefix or ''
         self.lane = lane
         self.include_search = include_search
+        self.license_link = license_link
         self.lanes_by_work = defaultdict(list)
 
     def reset(self, lane):
@@ -256,9 +258,17 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         if self.include_search:
             OPDSFeed.add_link_to_feed(
                 feed.feed,
-                rel="search",
+                rel='search',
                 href=self.search_url(),
-                type="application/opensearchdescription+xml")
+                type='application/opensearchdescription+xml')
+
+        if self.license_link:
+            OPDSFeed.add_link_to_feed(
+                feed.feed,
+                rel='license',
+                href=self.license_link,
+                type='text/html'
+            )
 
 
 class StaticFeedCOPPAAnnotator(StaticFeedAnnotator):
@@ -321,9 +331,9 @@ class StaticCOPPANavigationFeed(OPDSFeed):
             term=audience, label=audience, scheme='%saudience' % cls.SCHEMA_NS
         )
 
-    def __init__(self, title, base_url, youth_lane, full_lane, prefix=None):
+    def __init__(self, title, base_url, youth_lane, full_lane, **kwargs):
         """Turn a list of lanes into a feed."""
-        annotator = StaticFeedCOPPAAnnotator(base_url, prefix=prefix)
+        annotator = StaticFeedCOPPAAnnotator(base_url, **kwargs)
         lane_url = annotator.default_lane_url()
 
         super(StaticCOPPANavigationFeed, self).__init__(title, lane_url)
