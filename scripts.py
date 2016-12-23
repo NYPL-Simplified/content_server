@@ -725,6 +725,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
         search = False
         if parsed.search_url and parsed.search_index:
             search = True
+        if parsed.internal_elastic:
+            search = True            
 
         feeds = list()
         if youth_lane:
