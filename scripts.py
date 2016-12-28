@@ -686,10 +686,14 @@ class StaticFeedGenerationScript(StaticFeedScript):
             '--search-index', help='Upload to this elasticsearch index. elasticsearch-url must also be included'
         )
         parser.add_argument(
+            '--internal-elastic', help='Point to this elastic search url from inside the feed'
+        )
+        parser.add_argument(
             '--urns', metavar='URN', nargs='*',
             help='Specific identifier urns to process, esp. for testing'
         )
         return parser
+
 
     def run(self, uploader=None, cmd_args=None):
         parsed = self.arg_parser().parse_args(cmd_args)
@@ -721,6 +725,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
         search = False
         if parsed.search_url and parsed.search_index:
             search = True
+        if parsed.internal_elastic:
+            search = True            
 
         feeds = list()
         if youth_lane:
@@ -730,7 +736,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
                 youth_lane, full_lane,
                 prefix=parsed.prefix,
-                license_link=parsed.license
+                license_link=parsed.license, 
+                elastic_url=parsed.internal_elastic
             )
             prefix = parsed.prefix or ''
             feeds.append((
@@ -742,7 +749,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 feed_id, youth_lane,
                 prefix=parsed.prefix,
                 include_search=search,
-                license_link=parsed.license
+                license_link=parsed.license, 
+                elastic_url=parsed.internal_elastic
             )
             youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
             feeds += youth_feeds
@@ -752,7 +760,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 feed_id, full_lane,
                 prefix=parsed.prefix,
                 include_search=search,
-                license_link=parsed.license
+                license_link=parsed.license, 
+                elastic_url=parsed.internal_elastic
             )
         feeds += list(self.create_feeds([full_lane], page_size, annotator))
 

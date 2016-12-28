@@ -123,8 +123,9 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         slug = re.sub(' {2,}', ' ', slug)
         return unicode('-'.join(slug.split(' ')))
 
+
     def __init__(self, base_url, lane=None, prefix=None, include_search=None,
-                 license_link=None):
+                 license_link=None, elastic_url=None):
         if not base_url.endswith('/'):
             base_url += '/'
         self.base_url = base_url
@@ -133,16 +134,24 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         self.include_search = include_search
         self.license_link = license_link
         self.lanes_by_work = defaultdict(list)
+        self.elastic_url = elastic_url
+
 
     def reset(self, lane):
         self.lanes_by_work = defaultdict(list)
         self.lane = lane
 
+
     def default_lane_url(self):
         return self.base_url + self.prefix + self.HOME_FILENAME + '.xml'
 
+
     def search_url(self):
+        if self.elastic_url:
+            return self.elastic_url
+
         return self.base_url + 'search'
+
 
     def lane_filename(self, lane=None):
         lane = lane or self.lane
@@ -163,11 +172,13 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             lane = lane.parent
         return self.prefix + '_'.join(path)
 
+
     def filename_facet_segment(self, facets):
         ordered_by = list(facets.items())[0][1]
         if ordered_by != self.DEFAULT_ORDER:
             return '_' + ordered_by
         return ''
+
 
     def facet_url(self, facets):
         """Incoporate order facets into filenames for static feeds"""
@@ -183,6 +194,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         filename += self.filename_facet_segment(facets)
         return self.base_url + filename + '.xml'
 
+
     def feed_url(self, lane, facets, pagination):
         """Incorporate pages into filenames for static feeds"""
 
@@ -195,6 +207,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
 
         return self.base_url + filename + '.xml'
 
+
     def group_uri(self, work, license_pool, identifier):
         if not work in self.lanes_by_work:
             return None, ""
@@ -203,6 +216,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         self.lanes_by_work[work] = self.lanes_by_work[work][1:]
         return self.lane_url(lane), lane.display_name
 
+
     def groups_url(self, lane):
         if lane:
             filename = self.lane_filename(lane)
@@ -210,8 +224,10 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             filename = self.HOME_FILENAME
         return self.base_url + filename + '.xml'
 
+
     def lane_url(self, lane):
         return self.groups_url(lane)
+
 
     def sort_works_for_groups_feed(self, works, lane_order=None):
         """Sorts lanes_by_work by the preferred list order of lanes in
@@ -231,6 +247,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             # list. Add it to the end so it can be sorted against
             # without an error.
             lane_order.append(name)
+
 
         def sort_key(work):
             lanes = [l.get('lane') for l in self.lanes_by_work[work]]
@@ -254,6 +271,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             return key
         return sorted(works, key=sort_key)
 
+
     def annotate_feed(self, feed, lane):
         if self.include_search:
             OPDSFeed.add_link_to_feed(
@@ -269,6 +287,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
                 href=self.license_link,
                 type='text/html'
             )
+
 
 
 class StaticFeedCOPPAAnnotator(StaticFeedAnnotator):
