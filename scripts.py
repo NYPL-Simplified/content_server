@@ -252,7 +252,10 @@ class DirectoryImportScript(Script):
 class StaticFeedScript(Script):
 
     # Identifies csv headers that are not considered titles for lanes.
-    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub', 'featured', 'youth']
+    NONLANE_HEADERS = [
+        'urn', 'title', 'author', 'epub',
+        'hide_cover', 'featured', 'youth',
+    ]
 
     LANGUAGES = LanguageCodes.english_names_to_three.keys()
 
@@ -471,6 +474,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         for node, works in works_by_category_node.items():
             for work, identifier, url in works:
                 row_data = self.basic_work_row_data(work, identifier, url)
+                row_data['hide_cover'] = ''.encode('utf-8')
                 row_data['featured'] = ''.encode('utf-8')
                 row_data['youth'] = ''.encode('utf-8')
                 row_data[str(node)] = 'x'.encode('utf-8')
@@ -720,13 +724,13 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             self.log_missing_identifiers(full_lane.identifiers, full_query)
         else:
-            full_lane, full_query, youth_lane = self.make_lanes_from_csv(source_csv)
+            full_lane, full_query, youth_lane, suppressed_covers = self.make_lanes_from_csv(source_csv)
 
         search = False
         if parsed.search_url and parsed.search_index:
             search = True
         if parsed.internal_elastic:
-            search = True            
+            search = True
 
         feeds = list()
         if youth_lane:
@@ -749,10 +753,15 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 feed_id, youth_lane,
                 prefix=parsed.prefix,
                 include_search=search,
-                license_link=parsed.license, 
-                elastic_url=parsed.internal_elastic
+                license_link=parsed.license,
+                elastic_url=parsed.internal_elastic,
+                suppressed_covers=suppressed_covers
             )
-            youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
+
+            youth_feeds = list(self.create_feeds(
+                [youth_lane], page_size, annotator,
+                suppressed_covers=suppressed_covers
+            ))
             feeds += youth_feeds
         else:
             # Without a youth feed, we don't need to create a navigation feed.
@@ -760,10 +769,14 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 feed_id, full_lane,
                 prefix=parsed.prefix,
                 include_search=search,
-                license_link=parsed.license, 
-                elastic_url=parsed.internal_elastic
+                license_link=parsed.license,
+                elastic_url=parsed.internal_elastic,
+                suppressed_covers=suppressed_covers
             )
-        feeds += list(self.create_feeds([full_lane], page_size, annotator))
+
+        feeds += list(self.create_feeds(
+            [full_lane], page_size, annotator, suppressed_covers=suppressed_covers
+        ))
 
         upload_files = list()
         for base_filename, feed_pages in feeds:
@@ -872,10 +885,13 @@ class StaticFeedGenerationScript(StaticFeedScript):
             urns_to_identifiers = dict()
             all_featured = list()
             all_youth = list()
+            suppressed_covers = list()
             for row in reader:
                 urn = row.get('urn')
                 identifier = Identifier.parse_urn(self._db, urn)[0]
                 urns_to_identifiers[urn] = identifier
+                if row.get('hide_cover'):
+                    suppressed_covers.append(identifier)
                 if row.get('featured'):
                     all_featured.append(identifier)
                 if row.get('youth'):
@@ -897,7 +913,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             single_lane = StaticFeedBaseLane(
                 self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
-            return single_lane, single_lane.works(), youth_lane
+            return single_lane, single_lane.works(), youth_lane, suppressed_covers
 
         # Create lanes and sublanes.
         top_level_lane = self.empty_lane()
@@ -918,7 +934,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         full_query = top_level_lane.works()
         self.log_missing_identifiers(identifiers, full_query)
 
-        return top_level_lane, full_query, youth_lane
+        return top_level_lane, full_query, youth_lane, suppressed_covers
 
     def _add_lane_to_lane_path(self, top_level_lane, base_lane, lane_path):
         """Adds a lane with works to the proper place in a tiered lane
@@ -984,13 +1000,13 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 include_all=False
             )
 
-    def create_feeds(self, lanes, page_size, annotator):
+    def create_feeds(self, lanes, page_size, annotator,
+                     suppressed_covers=None):
         """Creates feeds for facets that may be required
 
         :return: A dictionary of filenames pointing to a list of CachedFeed
         objects representing pages
         """
-
         for lane in lanes:
             annotator.reset(lane)
             filename = annotator.lane_filename()
@@ -1002,6 +1018,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
                     self._db, lane.name, url, lane, annotator,
                     cache_type=AcquisitionFeed.NO_CACHE,
                     use_materialized_works=False,
+                    suppressed_covers=suppressed_covers
                 )
                 yield filename, [feed]
 
@@ -1023,14 +1040,16 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
                     pagination = Pagination(size=page_size)
                     feed_pages = self.create_feed_pages(
-                        lane, pagination, url, annotator, facet_obj
+                        lane, pagination, url, annotator, facet_obj,
+                        suppressed_covers=suppressed_covers
                     )
 
                     if ordered_by != annotator.DEFAULT_ORDER:
                         filename += ('_' + ordered_by)
                     yield filename, feed_pages
 
-    def create_feed_pages(self, lane, pagination, lane_url, annotator, facet):
+    def create_feed_pages(self, lane, pagination, lane_url, annotator, facet,
+                          suppressed_covers=None):
         """Yields each page of the feed for a particular lane."""
         pages = list()
         previous_page = pagination.previous_page
@@ -1041,7 +1060,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 facets=facet,
                 pagination=pagination,
                 cache_type=AcquisitionFeed.NO_CACHE,
-                use_materialized_works=False
+                use_materialized_works=False,
+                suppressed_covers=suppressed_covers
             )
             pages.append(page)
 

@@ -1,5 +1,6 @@
 import feedparser
 import os
+import tempfile
 from nose.tools import (
     assert_raises,
     eq_,
@@ -16,6 +17,7 @@ from ..core.lane import (
 )
 from ..core.model import (
     Edition,
+    Hyperlink,
     Identifier,
     LicensePool,
     Representation,
@@ -310,7 +312,6 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             eq_(license_url, license_link.href)
             eq_('text/html', license_link.type)
 
-
     def test_run_with_custom_elastic(self):
         """Confirms that can control contents of rel=search elements 
         in the result OPDS feeds by passing --internal-elastic parameter.
@@ -328,6 +329,57 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             eq_(elastic_url, search_link.href)
             eq_('application/opensearchdescription+xml', search_link.type)
 
+    def test_cover_suppression(self):
+        csv_content = (
+            "urn,hide_cover"+
+            "\nurn:isbn:9781682280065,"+
+            "\nurn:isbn:9781682280027,x"
+        )
+        # Create a temporary csv file.
+        csv_fd, csv_fpath = tempfile.mkstemp(
+            suffix='.csv', dir=os.getcwd()
+        )
+        with open(csv_fpath, 'w') as csv_file:
+            # Write content to the file.
+            csv_file.write(csv_content)
+
+        # Create some works to be found.
+        w1 = self._work(with_open_access_download=True)
+        w2 = self._work(with_open_access_download=True)
+
+        csv_isbns = ['9781682280065', '9781682280027']
+        for idx, work in enumerate([w1, w2]):
+            # Give the work an ISBN that exists in the CSV.
+            identifier = work.license_pools[0].identifier
+            identifier.type = Identifier.ISBN
+            identifier.identifier = csv_isbns[idx]
+
+            # Give the work's presentation edition some cover urls.
+            work.presentation_edition.cover_full_url = 'cover.png'
+            work.presentation_edition.cover_thumbnail_url = 'thumbnail.jpg'
+            work.calculate_opds_entries()
+        self._db.commit()
+
+        try:
+            # Run the script.
+            cmd_args = [csv_fpath, '-d', 'https://ls.org', '-u']
+            self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+        finally:
+            # Close and remove the temporary csv file.
+            os.close(csv_fd)
+            os.remove(csv_fpath)
+
+        for content in self.uploader.content:
+            feed = feedparser.parse(content)
+            entries = feed.entries
+            [covered] = [e for e in entries if e.title == w1.title]
+            image_links = [l for l in covered.links if l.rel.startswith(Hyperlink.IMAGE)]
+            eq_(2, len(image_links))
+            eq_(sorted(['cover.png', 'thumbnail.jpg']), sorted([l.href for l in image_links]))
+
+            [suppressed] = [e for e in entries if e.title == w2.title]
+            image_links = [l for l in suppressed.links if l.rel.startswith(Hyperlink.IMAGE)]
+            eq_([], image_links)
 
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')

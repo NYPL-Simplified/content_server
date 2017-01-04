@@ -125,7 +125,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
 
 
     def __init__(self, base_url, lane=None, prefix=None, include_search=None,
-                 license_link=None, elastic_url=None):
+                 license_link=None, elastic_url=None, suppressed_covers=None):
         if not base_url.endswith('/'):
             base_url += '/'
         self.base_url = base_url
@@ -136,6 +136,9 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         self.lanes_by_work = defaultdict(list)
         self.elastic_url = elastic_url
 
+
+        # A list of works whose covers should be suppressed.
+        self.suppressed_covers = suppressed_covers or []
 
     def reset(self, lane):
         self.lanes_by_work = defaultdict(list)
@@ -271,6 +274,11 @@ class StaticFeedAnnotator(ContentServerAnnotator):
             return key
         return sorted(works, key=sort_key)
 
+    def cover_links(self, work):
+        identifier = work.presentation_edition.primary_identifier
+        if identifier in self.suppressed_covers:
+            return [], []
+        return super(StaticFeedAnnotator, self).cover_links(work)
 
     def annotate_feed(self, feed, lane):
         if self.include_search:
