@@ -1,6 +1,10 @@
 import datetime
 import feedparser
 from nose.tools import set_trace
+from StringIO import StringIO
+from zipfile import ZipFile
+from lxml import etree
+import os
 from core.opds import OPDSFeed
 from core.opds_import import (
     OPDSImporterWithS3Mirror,
@@ -13,17 +17,25 @@ from core.model import (
     Representation,
     RightsStatus,
 )
+from core.util.http import HTTP
 
 class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
 
     DATA_SOURCE_NAME = "FeedBooks"
     THIRTY_DAYS = datetime.timedelta(days=30)
 
-    def __init__(self, _db, data_source_name=None, *args, **kwargs):
+    def __init__(self, _db, data_source_name=None, new_css=None, *args, **kwargs):
         """
         :param data_source_name: Passed in by OPDSImportScript and ignored.
         """
         kwargs['data_source_offers_licenses'] = True
+        kwargs['content_modifier'] = self.replace_css
+
+        if new_css:
+            self.new_css = new_css
+        else:
+            self.new_css = HTTP.get_with_timeout("http://www.daisy.org/z3986/2005/dtbook.2005.basic.css").content
+
         super(FeedbooksOPDSImporter, self).__init__(
             _db, self.DATA_SOURCE_NAME, *args, **kwargs
         )
@@ -168,6 +180,41 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
                 break
 
         return metadata
+
+    def replace_css(self, representation):
+        """This function will replace the content of every CSS file listed in an epub's
+        manifest with the value in self.new_css. The rest of the file is not changed.
+        """
+
+        if representation.media_type == Representation.EPUB_MEDIA_TYPE:
+
+            old_zip_content = StringIO(representation.content)
+            new_zip_content = StringIO()
+
+            with ZipFile(old_zip_content) as old_zip:
+                with old_zip.open("META-INF/container.xml") as container_file:
+                    container = container_file.read()
+                    rootfile_element = etree.fromstring(container).find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfiles").find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfile")
+                    package_path = rootfile_element.get('full-path')
+
+                with old_zip.open(package_path) as package_file:
+                    package = package_file.read()
+                    manifest_element = etree.fromstring(package).find("{http://www.idpf.org/2007/opf}manifest")
+                    css_paths = []
+                    for child in manifest_element:
+                        if child.tag == "{http://www.idpf.org/2007/opf}item":
+                            if child.get('media-type') == "text/css":
+                                href = package_path.replace(os.path.basename(package_path), child.get("href"))
+                                css_paths.append(href)
+            
+                with ZipFile(new_zip_content, "w") as new_zip:
+                    for item in old_zip.infolist():
+                        if item.filename not in css_paths:
+                            new_zip.writestr(item, old_zip.read(item.filename))
+                        else:
+                            new_zip.writestr(item, self.new_css)
+
+            representation.content = new_zip_content.getvalue()
 
 
 class RehostingPolicy(object):
