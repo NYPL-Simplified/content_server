@@ -186,20 +186,37 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         manifest with the value in self.new_css. The rest of the file is not changed.
         """
 
-        if representation.media_type == Representation.EPUB_MEDIA_TYPE:
+        if representation.media_type == Representation.EPUB_MEDIA_TYPE and representation.content:
 
             old_zip_content = StringIO(representation.content)
             new_zip_content = StringIO()
 
             with ZipFile(old_zip_content) as old_zip:
+                if not "META-INF/container.xml" in old_zip.namelist():
+                    self.log.warning("Invalid EPUB file, not modifying: %s" % representation.url)
+                    return
+
                 with old_zip.open("META-INF/container.xml") as container_file:
                     container = container_file.read()
-                    rootfile_element = etree.fromstring(container).find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfiles").find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfile")
+                    rootfiles_element = etree.fromstring(container).find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfiles")
+                    if rootfiles_element is None:
+                        self.log.warning("Invalid EPUB file, not modifying: %s" % representation.url)
+                        return
+
+                    rootfile_element = rootfiles_element.find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfile")
+                    if rootfile_element is None:
+                        self.log.warning("Invalid EPUB file, not modifying: %s" % representation.url)
+                        return
+
                     package_path = rootfile_element.get('full-path')
 
                 with old_zip.open(package_path) as package_file:
                     package = package_file.read()
                     manifest_element = etree.fromstring(package).find("{http://www.idpf.org/2007/opf}manifest")
+                    if manifest_element is None:
+                        self.log.warning("Invalid EPUB file, not modifying: %s" % representation.url)
+                        return
+
                     css_paths = []
                     for child in manifest_element:
                         if child.tag == "{http://www.idpf.org/2007/opf}item":
