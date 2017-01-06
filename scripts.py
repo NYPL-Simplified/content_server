@@ -1020,6 +1020,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             if lane.sublanes:
                 # This is an intermediate lane, without its own works.
                 # It needs a groups feed.
+                self.log.info("Creating groups feed for lane: %s", lane.name)
                 feed = AcquisitionFeed.groups(
                     self._db, lane.name, url, lane, annotator,
                     cache_type=AcquisitionFeed.NO_CACHE,
@@ -1040,6 +1041,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
                     enabled_facets=self.DEFAULT_ENABLED_FACETS
                 )
 
+                self.log.info("Creating feed pages for lane: %s", lane.name)
                 for facet_group in list(static_facets.facet_groups):
                     ordered_by, facet_obj = facet_group[1:3]
 

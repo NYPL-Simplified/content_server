@@ -4,6 +4,8 @@ from nose.tools import (
     eq_,
     set_trace,
 )
+from StringIO import StringIO
+from zipfile import ZipFile
 from . import DatabaseTest
 from ..feedbooks import (
     FeedbooksOPDSImporter,
@@ -39,6 +41,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             self._db, http_get = self.http.do_get,
             mirror=self.mirror,
             metadata_client=self.metadata,
+            new_css="Test CSS",
         )
         self.data_source = DataSource.lookup(
             self._db, self.importer.DATA_SOURCE_NAME, autocreate=True,
@@ -156,7 +159,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
                          if x.rel==Hyperlink.GENERIC_OPDS_ACQUISITION]
         eq_([], generic_links)
         
-    def test_open_access_book_mirrored(self):
+    def test_open_access_book_modified_and_mirrored(self):
         feed = self.sample_file("feed_with_open_access_book.atom")
         self.http.queue_response(
             200, OPDSFeed.ACQUISITION_FEED_TYPE,
@@ -173,7 +176,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # The requests to the various copies of the book will succeed,
         # and the books will be mirrored.
         self.http.queue_response(
-            200, content='I am 667.epub',
+            200, content=self.sample_file("677.epub"),
             media_type=Representation.EPUB_MEDIA_TYPE
         )
 
@@ -210,6 +213,24 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # The pool is marked as open-access, because it has an open-access
         # delivery mechanism that was mirrored.
         eq_(True, pool.open_access)
+
+        # The mirrored content contains the modified CSS.
+        content = StringIO(self.mirror.content[0])
+        with ZipFile(content) as zip:
+            # The zip still contains the original epub's files.
+            assert "META-INF/container.xml" in zip.namelist()
+            assert "OPS/css/about.css" in zip.namelist()
+            assert "OPS/main0.xml" in zip.namelist()
+
+            # The content of an old file hasn't changed.
+            with zip.open("mimetype") as f:
+                eq_("application/epub+zip\r\n", f.read())
+
+            # The content of CSS files has been changed to the new value.
+            with zip.open("OPS/css/about.css") as f:
+                eq_("Test CSS", f.read())
+        
+        
         
     def test_in_copyright_book_not_mirrored(self):
 
