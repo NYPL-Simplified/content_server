@@ -769,9 +769,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 elastic_url=parsed.internal_elastic
             )
 
-            youth_feeds = list(self.create_feeds(
-                [youth_lane], page_size, annotator
-            ))
+            youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
             feeds += youth_feeds
         else:
             # Without a youth feed, we don't need to create a navigation feed.
