@@ -10,6 +10,7 @@ from os import path
 
 from . import DatabaseTest
 
+from ..core.external_search import DummyExternalSearchIndex
 from ..core.lane import (
     Facets,
     Lane,
@@ -363,7 +364,12 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         try:
             # Run the script.
             cmd_args = [csv_fpath, '-d', 'https://ls.org', '-u']
-            self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+            search = DummyExternalSearchIndex()
+            self.script.run(
+                uploader=self.uploader,
+                cmd_args=cmd_args,
+                search_index_client=search
+            )
         finally:
             # Close and remove the temporary csv file.
             os.close(csv_fd)
