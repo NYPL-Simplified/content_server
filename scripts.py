@@ -251,11 +251,16 @@ class DirectoryImportScript(Script):
 
 class StaticFeedScript(Script):
 
+    # Barebones headers that will get you a human-readable csv or
+    # some feeds, without frills.
+    BASIC_HEADERS = ['urn', 'title', 'author', 'epub']
+
+    # These headers allow a human user to make selections that
+    # impact the final feeds in a variety of ways.
+    SELECTION_HEADERS = ['hide_cover', 'featured', 'youth']
+
     # Identifies csv headers that are not considered titles for lanes.
-    NONLANE_HEADERS = [
-        'urn', 'title', 'author', 'epub',
-        'hide_cover', 'featured', 'youth',
-    ]
+    NONLANE_HEADERS = BASIC_HEADERS + SELECTION_HEADERS
 
     LANGUAGES = LanguageCodes.english_names_to_three.keys()
 

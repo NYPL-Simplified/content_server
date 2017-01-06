@@ -57,9 +57,7 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         eq_(5, len(row_data))
 
         # Only the basic work information headers are included.
-        expected = self.script.NONLANE_HEADERS[:]
-        expected.remove('featured')
-        expected.remove('youth')
+        expected = self.script.BASIC_HEADERS
         all_headers = list()
         [all_headers.extend(r.keys()) for r in row_data]
         eq_(sorted(expected), sorted(set(all_headers)))
@@ -389,7 +387,13 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
-        top_level, _query, youth_lane = self.script.make_lanes_from_csv(csv_filename)
+        result = self.script.make_lanes_from_csv(csv_filename)
+
+        # It returns all the results we expect (even though they're
+        # not all being tested in this method).
+        eq_(4, len(result))
+        top_level = result[0]
+        youth_lane = result[2]
 
         def sublane_names(parent):
             return sorted([s.name for s in parent.sublanes])
