@@ -719,7 +719,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             raise ValueError("Both --search-url and --search-index arguments must be included to upload to a search index")
 
         youth_lane = None
-        suppressed_covers = list()
+        rejected_covers = list()
         if parsed.urns:
             identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                            for urn in parsed.urns]
@@ -730,11 +730,11 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             self.log_missing_identifiers(full_lane.identifiers, full_query)
         else:
-            full_lane, full_query, youth_lane, suppressed_covers = self.make_lanes_from_csv(source_csv)
+            full_lane, full_query, youth_lane, rejected_covers = self.make_lanes_from_csv(source_csv)
 
-        if suppressed_covers:
-            Work.suppress_covers(
-                self._db, suppressed_covers,
+        if rejected_covers:
+            Work.reject_covers(
+                self._db, rejected_covers,
                 search_index_client=search_index_client
             )
 
@@ -890,13 +890,13 @@ class StaticFeedGenerationScript(StaticFeedScript):
             urns_to_identifiers = dict()
             all_featured = list()
             all_youth = list()
-            suppressed_covers = list()
+            rejected_covers = list()
             for row in reader:
                 urn = row.get('urn')
                 identifier = Identifier.parse_urn(self._db, urn)[0]
                 urns_to_identifiers[urn] = identifier
                 if row.get('hide_cover'):
-                    suppressed_covers.append(identifier)
+                    rejected_covers.append(identifier)
                 if row.get('featured'):
                     all_featured.append(identifier)
                 if row.get('youth'):
@@ -918,7 +918,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             single_lane = StaticFeedBaseLane(
                 self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
-            return single_lane, single_lane.works(), youth_lane, suppressed_covers
+            return single_lane, single_lane.works(), youth_lane, rejected_covers
 
         # Create lanes and sublanes.
         top_level_lane = self.empty_lane()
@@ -939,7 +939,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         full_query = top_level_lane.works()
         self.log_missing_identifiers(identifiers, full_query)
 
-        return top_level_lane, full_query, youth_lane, suppressed_covers
+        return top_level_lane, full_query, youth_lane, rejected_covers
 
     def _add_lane_to_lane_path(self, top_level_lane, base_lane, lane_path):
         """Adds a lane with works to the proper place in a tiered lane
