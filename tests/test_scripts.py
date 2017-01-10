@@ -311,23 +311,6 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             eq_(license_url, license_link.href)
             eq_('text/html', license_link.type)
 
-    def test_run_with_custom_elastic(self):
-        """Confirms that can control contents of rel=search elements 
-        in the result OPDS feeds by passing --internal-elastic parameter.
-        """
-        elastic_url = 'https://searchme.org/searcharoo.html'
-        elastic_args = ['--internal-elastic', elastic_url]
-
-        self.run_mini_csv(*elastic_args)
-
-        for content in self.uploader.content:
-            # All of the uploaded feeds have a license link with the
-            # expected URL.
-            feed = feedparser.parse(content)
-            [search_link] = [l for l in feed.feed.links if l.rel == 'search']
-            eq_(elastic_url, search_link.href)
-            eq_('application/opensearchdescription+xml', search_link.type)
-
     def test_cover_suppression(self):
         csv_content = (
             "urn,hide_cover"+

@@ -123,9 +123,8 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         slug = re.sub(' {2,}', ' ', slug)
         return unicode('-'.join(slug.split(' ')))
 
-
     def __init__(self, base_url, lane=None, prefix=None, include_search=None,
-                 license_link=None, elastic_url=None):
+                 license_link=None):
         if not base_url.endswith('/'):
             base_url += '/'
         self.base_url = base_url
@@ -134,7 +133,6 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         self.include_search = include_search
         self.license_link = license_link
         self.lanes_by_work = defaultdict(list)
-        self.elastic_url = elastic_url
 
     def reset(self, lane):
         self.lanes_by_work = defaultdict(list)
@@ -146,9 +144,6 @@ class StaticFeedAnnotator(ContentServerAnnotator):
 
 
     def search_url(self):
-        if self.elastic_url:
-            return self.elastic_url
-
         return self.base_url + 'search'
 
 
