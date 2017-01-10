@@ -251,8 +251,16 @@ class DirectoryImportScript(Script):
 
 class StaticFeedScript(Script):
 
+    # Barebones headers that will get you a human-readable csv or
+    # some feeds, without frills.
+    BASIC_HEADERS = ['urn', 'title', 'author', 'epub']
+
+    # These headers allow a human user to make selections that
+    # impact the final feeds in a variety of ways.
+    SELECTION_HEADERS = ['hide_cover', 'featured', 'youth']
+
     # Identifies csv headers that are not considered titles for lanes.
-    NONLANE_HEADERS = ['urn', 'title', 'author', 'epub', 'featured', 'youth']
+    NONLANE_HEADERS = BASIC_HEADERS + SELECTION_HEADERS
 
     LANGUAGES = LanguageCodes.english_names_to_three.keys()
 
@@ -471,6 +479,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         for node, works in works_by_category_node.items():
             for work, identifier, url in works:
                 row_data = self.basic_work_row_data(work, identifier, url)
+                row_data['hide_cover'] = ''.encode('utf-8')
                 row_data['featured'] = ''.encode('utf-8')
                 row_data['youth'] = ''.encode('utf-8')
                 row_data[str(node)] = 'x'.encode('utf-8')
@@ -695,7 +704,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         return parser
 
 
-    def run(self, uploader=None, cmd_args=None):
+    def run(self, uploader=None, cmd_args=None, search_index_client=None):
         parsed = self.arg_parser().parse_args(cmd_args)
         source_csv = os.path.abspath(parsed.source_csv)
         feed_id = unicode(parsed.domain)
@@ -710,6 +719,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             raise ValueError("Both --search-url and --search-index arguments must be included to upload to a search index")
 
         youth_lane = None
+        rejected_covers = list()
         if parsed.urns:
             identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                            for urn in parsed.urns]
@@ -720,13 +730,19 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             self.log_missing_identifiers(full_lane.identifiers, full_query)
         else:
-            full_lane, full_query, youth_lane = self.make_lanes_from_csv(source_csv)
+            full_lane, full_query, youth_lane, rejected_covers = self.make_lanes_from_csv(source_csv)
+
+        if rejected_covers:
+            Work.reject_covers(
+                self._db, rejected_covers,
+                search_index_client=search_index_client
+            )
 
         search = False
         if parsed.search_url and parsed.search_index:
             search = True
         if parsed.internal_elastic:
-            search = True            
+            search = True
 
         feeds = list()
         if youth_lane:
@@ -749,9 +765,10 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 feed_id, youth_lane,
                 prefix=parsed.prefix,
                 include_search=search,
-                license_link=parsed.license, 
+                license_link=parsed.license,
                 elastic_url=parsed.internal_elastic
             )
+
             youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
             feeds += youth_feeds
         else:
@@ -760,9 +777,10 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 feed_id, full_lane,
                 prefix=parsed.prefix,
                 include_search=search,
-                license_link=parsed.license, 
+                license_link=parsed.license,
                 elastic_url=parsed.internal_elastic
             )
+
         feeds += list(self.create_feeds([full_lane], page_size, annotator))
 
         upload_files = list()
@@ -872,10 +890,13 @@ class StaticFeedGenerationScript(StaticFeedScript):
             urns_to_identifiers = dict()
             all_featured = list()
             all_youth = list()
+            rejected_covers = list()
             for row in reader:
                 urn = row.get('urn')
                 identifier = Identifier.parse_urn(self._db, urn)[0]
                 urns_to_identifiers[urn] = identifier
+                if row.get('hide_cover'):
+                    rejected_covers.append(identifier)
                 if row.get('featured'):
                     all_featured.append(identifier)
                 if row.get('youth'):
@@ -897,7 +918,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             single_lane = StaticFeedBaseLane(
                 self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
-            return single_lane, single_lane.works(), youth_lane
+            return single_lane, single_lane.works(), youth_lane, rejected_covers
 
         # Create lanes and sublanes.
         top_level_lane = self.empty_lane()
@@ -918,7 +939,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         full_query = top_level_lane.works()
         self.log_missing_identifiers(identifiers, full_query)
 
-        return top_level_lane, full_query, youth_lane
+        return top_level_lane, full_query, youth_lane, rejected_covers
 
     def _add_lane_to_lane_path(self, top_level_lane, base_lane, lane_path):
         """Adds a lane with works to the proper place in a tiered lane
@@ -990,7 +1011,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
         :return: A dictionary of filenames pointing to a list of CachedFeed
         objects representing pages
         """
-
         for lane in lanes:
             annotator.reset(lane)
             filename = annotator.lane_filename()
@@ -1002,7 +1022,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 feed = AcquisitionFeed.groups(
                     self._db, lane.name, url, lane, annotator,
                     cache_type=AcquisitionFeed.NO_CACHE,
-                    use_materialized_works=False,
+                    use_materialized_works=False
                 )
                 yield filename, [feed]
 

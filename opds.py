@@ -136,7 +136,6 @@ class StaticFeedAnnotator(ContentServerAnnotator):
         self.lanes_by_work = defaultdict(list)
         self.elastic_url = elastic_url
 
-
     def reset(self, lane):
         self.lanes_by_work = defaultdict(list)
         self.lane = lane
@@ -270,7 +269,6 @@ class StaticFeedAnnotator(ContentServerAnnotator):
                 return 50
             return key
         return sorted(works, key=sort_key)
-
 
     def annotate_feed(self, feed, lane):
         if self.include_search:

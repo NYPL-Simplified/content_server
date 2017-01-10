@@ -1,25 +1,27 @@
 # Requirements for core
+cairosvg==1.0.22
+elasticsearch
 feedparser
+flask
+Flask-Babel
+fuzzywuzzy
+isbnlib
+loggly-python-handler
+lxml
+mock
+money
+nameparser
+nose
 pillow
 psycopg2
+py-bcrypt
+python-dateutil
 requests
+rdflib
 sqlalchemy>=1.0.6
-nose
-lxml
-flask
-isbnlib
 tinys3==0.1.11
 textblob
-rdflib
-elasticsearch
-python-dateutil
 uwsgi
-loggly-python-handler
-cairosvg==1.0.22
-py-bcrypt
-mock
-Flask-Babel
-money
 
 # Ensure that we support SNI-based SSL
 ndg-httpsclient
