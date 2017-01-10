@@ -164,6 +164,7 @@ class MakePresentationReadyScript(Script):
         PresentationReadyMonitor(
             self._db, providers, calculate_work_even_if_no_author=True).run()
 
+
 class DirectoryImportScript(Script):
 
     def run(self, data_source_name, metadata_records, epub_directory, cover_directory):

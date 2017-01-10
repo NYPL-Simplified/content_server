@@ -24,6 +24,7 @@ from core.model import (
     Edition,
     LicensePool,
 )
+from core.util import slugify
 
 from config import Configuration
 
@@ -118,10 +119,7 @@ class StaticFeedAnnotator(ContentServerAnnotator):
 
     @classmethod
     def slugify_feed_title(cls, feed_title):
-        slug = re.sub('[.!@#\'$,]', '', feed_title.lower())
-        slug = re.sub('&', ' and ', slug)
-        slug = re.sub(' {2,}', ' ', slug)
-        return unicode('-'.join(slug.split(' ')))
+        return slugify(feed_title)
 
     def __init__(self, base_url, lane=None, prefix=None, include_search=None,
                  license_link=None):

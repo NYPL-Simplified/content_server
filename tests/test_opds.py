@@ -42,12 +42,6 @@ class TestAnnotator(DatabaseTest):
 
 class TestStaticFeedAnnotator(DatabaseTest):
 
-    def test_slugify_feed_title(self):
-        annotator = StaticFeedAnnotator
-        eq_('hey-im-a-feed', annotator.slugify_feed_title("Hey! I'm a feed!!"))
-        eq_('you-and-me-n-every_feed', annotator.slugify_feed_title("You & Me n Every_Feed"))
-        eq_('money-honey', annotator.slugify_feed_title("Money $$$       Honey"))
-
     def test_prefix(self):
 
         annotator = StaticFeedAnnotator('test.org', prefix='demo/')
