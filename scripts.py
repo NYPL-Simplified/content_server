@@ -12,6 +12,14 @@ from sqlalchemy import (
     not_,
     or_,
 )
+from sqlalchemy.orm import (
+    joinedload,
+    contains_eager,
+)
+from sqlalchemy.orm.exc import (
+    NoResultFound,
+    MultipleResultsFound,
+)
 
 from core.classifier import Classifier
 from core.scripts import Script
@@ -27,6 +35,8 @@ from core.metadata_layer import (
 )
 from core.model import (
     Classification,
+    create,
+    CustomList,
     DataSource,
     DeliveryMechanism,
     Edition,
@@ -49,6 +59,7 @@ from core.external_search import ExternalSearchIndex
 from core.util import (
     fast_query_count,
     LanguageCodes,
+    slugify,
 )
 
 from coverage import GutenbergEPUBCoverageProvider
@@ -650,6 +661,211 @@ class StaticFeedCSVExportScript(StaticFeedScript):
         [fieldnames.extend(r.keys()) for r in rows]
         new = set(fieldnames).difference(existing)
         return sorted(new)
+
+
+class CustomListUploadScript(StaticFeedScript):
+
+    class CustomListAlreadyExists(Exception):
+        """Raised when a new CustomList is requested with the name of an
+        existing list.
+        """
+        pass
+
+    class UneditableCustomList(Exception):
+        """Raised when the user attempts to edit a machine-generated
+        CustomList
+        """
+
+    EDIT_OPTIONS = ['append', 'replace', 'remove']
+
+    ADD_OPTIONS = ['append', 'new']
+
+    @classmethod
+    def arg_parser(cls):
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            'source_csv', help='A CSV file to import URNs and Lane categories'
+        )
+        parser.add_argument(
+            'name', help='A name for your list (e.g. My Custom List)'
+        )
+
+        save = parser.add_mutually_exclusive_group(required=True)
+        save.add_argument(
+            '-n', '--new', action="store_const", dest="save_option",
+            const="new", help="Create a new list."
+        )
+        save.add_argument(
+            '-a', '--append', action="store_const", dest="save_option",
+            const="append", help="Append to an existing list. Any new "\
+            "Identifiers in the source will be added to the existing CustomList."
+        )
+        save.add_argument(
+            '-rp', '--replace', action="store_const", dest="save_option",
+            const="replace", help="Replace an existing list. All Identifiers "\
+            "in the source will be added to the existing  CustomList. "\
+            "Works in the CustomList and not in the source will be removed "\
+            "from the CustomList."
+        )
+        save.add_argument(
+            '-rm', '--remove', action="store_const", dest="save_option",
+            const="remove", help="Remove from an existing list. All Identifiers "\
+            "in the source will be removed from the existing CustomList."
+        )
+
+        return parser
+
+    @property
+    def source(self):
+        return DataSource.lookup(self._db, DataSource.LIBRARY_STAFF)
+
+    def run(self, cmd_args=None):
+        # Extract parameter values from the parser
+        parsed = self.arg_parser().parse_args(cmd_args)
+        source_csv = parsed.source_csv
+        list_name = unicode(parsed.name)
+        list_id = slugify(list_name)
+        save_option = parsed.save_option
+        save_new = save_option not in self.EDIT_OPTIONS
+
+        custom_list = self.fetch_editable_list(list_name, list_id, save_option)
+        if save_new and not custom_list:
+            # A new CustomList is being created.
+            created_at = datetime.utcnow()
+            create_method_kwargs = dict(
+                name=list_name,
+                created=created_at,
+                updated=created_at
+            )
+            custom_list, is_new = create(
+                self._db, CustomList,
+                data_source=self.source,
+                foreign_identifier=list_id,
+            )
+
+        works, youth_works = self.works_from_source(source_csv)
+        self.edit_list(custom_list, works, save_option)
+
+        if youth_works:
+            youth_list = None
+            youth_list_name = list_name + u' - Children'
+            youth_list_id = list_id + u'_children'
+            created_at = datetime.utcnow()
+            if save_new:
+                # We're creating a new youth list as well.
+                youth_list = create(
+                    self._db, CustomList,
+                    name=youth_list_name,
+                    data_source=self.source,
+                    foreign_identifier=youth_list_id,
+                    created=created_at,
+                    updated=created_at
+                )[0]
+            else:
+                # We may or may not be creating a new youth list.
+                get_one_or_create(self._db, CustomList)
+            self.edit_list(custom_list, works, save_option)
+
+    def fetch_editable_list(self, list_name, list_id, save_option):
+        """Returns a CustomList from the database or None if a new
+        CustomList is requested.
+
+        Raises an error if CustomList data integrity is at risk or the
+        requested save options are inappropriate according to what is
+        already in the database.
+        """
+        custom_lists = CustomList.find(self._db, list_id, name=list_name).all()
+
+        if len(custom_lists) > 1:
+            raise MultipleResultsFound(
+                'Multiple CustomLists with the name "%s" or the '\
+                'identifier "%s" have been found. Access the database for '\
+                'more information or use a different CustomList name.' %
+                (list_name, list_id)
+            )
+
+        if save_option in self.EDIT_OPTIONS and not custom_lists:
+            raise NoResultFound(
+                'CustomList "%s (%s)" not in database. Please use save '\
+                'option "-n" or "--new" to create a new list.' %
+                (list_name, list_id)
+            )
+
+        if save_option == 'new':
+            if custom_lists:
+                raise self.CustomListAlreadyExists(
+                    '%r already exists. Use save option "--append" or '\
+                    '"--replace" to edit the existing list or use a '\
+                    'different CustomList name to create a new list.'
+                )
+            return None
+
+        [custom_list] = custom_lists
+        if custom_list.data_source.name != self.source.name:
+            raise self.UneditableCustomList(
+                '%r was generated by an internal process and cannot be '
+                'edited by puny humans.'
+            )
+
+        return custom_list
+
+    def works_from_source(self, source_csv):
+        """Extracts works from the source file and does any work
+        requested by any `SELECTION_HEADERS`.
+
+        :return: A query of Works best representing URNs from the CSV.
+        """
+        filename = os.path.abspath(source_csv)
+
+        identifiers = list()
+        selections = defaultdict(list)
+        # initialize selector lists in the dict.
+        [selections[selector] for selector in self.SELECTION_HEADERS]
+
+        with open(filename) as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                urn = row.get('urn')
+                identifier = Identifier.parse_urn(self._db, urn)[0]
+                identifiers.append(identifier)
+
+                for selector in self.SELECTION_HEADERS:
+                    if row.get(selector):
+                        selections[selector].append(identifier)
+
+        works_qu = Work.from_identifiers(self._db, identifiers)
+        works_qu = works_qu.options(
+            joinedload(Work.license_pools),
+            contains_eager(Work.presentation_edition)
+        )
+
+        youth_works_qu = None
+        selections_for_youth = selections['youth']
+        if selections_for_youth:
+            youth_works_qu = Work.from_identifiers(
+                self._db, selections_for_youth, base_query=works_qu
+            )
+
+        # Make sure we have the most up-to-date versions of the work,
+        # according to whatever selections have been made.
+        self._update_works(works_qu, selections)
+
+        return works_qu, youth_works_qu
+
+    def _update_works(self, works_qu, selections_dict):
+        """Updates works according to a set of human-generated selections."""
+
+        rejected_covers = selections_dict['hide_cover']
+        if rejected_covers:
+            Work.reject_covers(self._db, rejected_covers)
+
+        featured_works = selections_dict['featured']
+        if featured_works:
+            # TODO: Figure out Work quality determinations that create
+            # a Lane's featured works and manipulate them.
+            pass
+
+        self._db.flush()
 
 
 class StaticFeedGenerationScript(StaticFeedScript):
