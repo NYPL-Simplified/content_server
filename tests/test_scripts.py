@@ -12,10 +12,6 @@ from sqlalchemy.orm.exc import NoResultFound
 
 from . import DatabaseTest
 
-from ..core.config import (
-    Configuration,
-    temp_config,
-)
 from ..core.external_search import DummyExternalSearchIndex
 from ..core.lane import (
     Facets,
@@ -32,6 +28,10 @@ from ..core.model import (
     Work,
 )
 
+from ..config import (
+    Configuration,
+    temp_config,
+)
 from ..lanes import StaticFeedBaseLane
 from ..opds import StaticFeedAnnotator
 from ..s3 import DummyS3Uploader
@@ -237,8 +237,11 @@ class TestCustomListUploadScript(DatabaseTest):
         self._db.commit()
 
         with temp_config() as config:
-            config[Configuration.POLICIES][Configuration.MINIMUM_FEATURED_QUALITY] = 0.90
+            config[Configuration.POLICIES] = {
+                Configuration.MINIMUM_FEATURED_QUALITY : 0.90
+            }
             works_qu, youth_qu = self.script.works_from_source(filename)
+
         eq_(2, works_qu.count())
         hidden_work = works_by_urn['urn:isbn:9781682280027']
         hidden_work_entries = hidden_work.simple_opds_entry+hidden_work.verbose_opds_entry
@@ -248,7 +251,7 @@ class TestCustomListUploadScript(DatabaseTest):
         # If the CSV indicates that a work should be featured, it's given
         # an appropriate quality rating.
         featured_work = works_by_urn['urn:isbn:9781682280065']
-        eq_(True, featured_work.quality==0.90)
+        eq_(True, float(featured_work.quality)==0.9)
 
     def test_edit_list(self):
         custom_list = self._customlist(num_entries=0)[0]
