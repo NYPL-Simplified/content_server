@@ -8,13 +8,14 @@ from nose.tools import (
 )
 from os import path
 
-from sqlalchemy.orm.exc import (
-    NoResultFound,
-    MultipleResultsFound,
-)
+from sqlalchemy.orm.exc import NoResultFound
 
 from . import DatabaseTest
 
+from ..core.config import (
+    Configuration,
+    temp_config,
+)
 from ..core.external_search import DummyExternalSearchIndex
 from ..core.lane import (
     Facets,
@@ -184,7 +185,7 @@ class TestCustomListUploadScript(DatabaseTest):
             result = self.script.fetch_editable_list(u'A List', u'a-list', option)
             eq_(custom_list, result)
 
-        # Unless the list was created automatically.
+        # Unless the list was created elsewhere.
         custom_list.data_source = DataSource.lookup(self._db, DataSource.NYT)
         for option in self.script.EDIT_OPTIONS:
             assert_raises(self.script.UneditableCustomList,
@@ -235,12 +236,19 @@ class TestCustomListUploadScript(DatabaseTest):
             eq_(2, entries.count('thumbnail.jpg'))
         self._db.commit()
 
-        works_qu, youth_qu = self.script.works_from_source(filename)
+        with temp_config() as config:
+            config[Configuration.POLICIES][Configuration.MINIMUM_FEATURED_QUALITY] = 0.90
+            works_qu, youth_qu = self.script.works_from_source(filename)
         eq_(2, works_qu.count())
         hidden_work = works_by_urn['urn:isbn:9781682280027']
         hidden_work_entries = hidden_work.simple_opds_entry+hidden_work.verbose_opds_entry
         assert 'cover.png' not in hidden_work_entries
         assert 'thumbnail.jpg' not in hidden_work_entries
+
+        # If the CSV indicates that a work should be featured, it's given
+        # an appropriate quality rating.
+        featured_work = works_by_urn['urn:isbn:9781682280065']
+        eq_(True, featured_work.quality==0.90)
 
     def test_edit_list(self):
         custom_list = self._customlist(num_entries=0)[0]
