@@ -123,9 +123,8 @@ class TestCustomListUploadScript(DatabaseTest):
         self.script = CustomListUploadScript(_db=self._db)
 
     def _create_works_from_csv(self, csv_filename):
-        csv_filename = os.path.abspath(
-            os.path.join('tests', 'files', 'scripts', csv_filename)
-        )
+        local_filename = os.path.join('tests', 'files', 'scripts', csv_filename)
+        csv_filename = os.path.abspath(local_filename)
 
         # Create all of the identifiers in the csv.
         identifiers = list()
@@ -143,13 +142,20 @@ class TestCustomListUploadScript(DatabaseTest):
         works_by_urn = dict()
         for identifier in identifiers:
             work = self._work(with_open_access_download=True)
+            license_pool = work.license_pools[0]
+
+            old_identifier = license_pool.identifier
+            old_identifier.equivalent_to(
+                license_pool.data_source, identifier, 1
+            )
             work.license_pools[0].identifier = identifier
+
             works.append(work)
             works_by_urn[identifier.urn] = work
         self._db.commit()
 
         # Return everything you might need for a test.
-        return works, works_by_urn
+        return works, works_by_urn, local_filename
 
     def test_fetch_editable_list(self):
         # Trying to edit a list that doesn't exist raises an error.
@@ -168,18 +174,14 @@ class TestCustomListUploadScript(DatabaseTest):
             data_source_name=DataSource.LIBRARY_STAFF
         )[0]
 
-        # Trying to create a new list that has the same name OR
-        # foreign identifier raises an error.
+        # Trying to create a new list that has the same foreign identifier
+        # raises an error.
         assert_raises(self.script.CustomListAlreadyExists,
             self.script.fetch_editable_list, u'A List', u'a-list', 'new')
-        assert_raises(self.script.CustomListAlreadyExists,
-            self.script.fetch_editable_list, u'My List', u'my-list', 'new')
 
         # Trying to edit the list in any way returns the list, though.
         for option in self.script.EDIT_OPTIONS:
             result = self.script.fetch_editable_list(u'A List', u'a-list', option)
-            eq_(custom_list, result)
-            result = self.script.fetch_editable_list(u'My List', u'my-list', option)
             eq_(custom_list, result)
 
         # Unless the list was created automatically.
@@ -187,29 +189,14 @@ class TestCustomListUploadScript(DatabaseTest):
         for option in self.script.EDIT_OPTIONS:
             assert_raises(self.script.UneditableCustomList,
                 self.script.fetch_editable_list, u'A List', u'a-list', option)
-            assert_raises(self.script.UneditableCustomList,
-                self.script.fetch_editable_list, u'My List', u'my-list', option)
-
-        # Or multiple lists are found, which is really not very good.
-        other_list = self._customlist(
-            foreign_identifier='my-list', name='A List', num_entries=0,
-            data_source_name=DataSource.LIBRARY_STAFF
-        )
-
-        all_options = self.script.EDIT_OPTIONS + ['new']
-        for option in all_options:
-            assert_raises(MultipleResultsFound,
-                self.script.fetch_editable_list, 'A List', 'a-list', option)
 
     def test_works_from_source(self):
-        (works, works_by_urn) = self._create_works_from_csv('mini.csv')
+        works, works_by_urn, filename = self._create_works_from_csv('mini.csv')
         # Create an extra work to confirm that it's ignored.
         ignored_work = self._work(with_open_access_download=True)
 
-        prefix = 'tests/files/scripts/'
-
         # A basic CSV returns what we expect.
-        works_qu, youth_qu = self.script.works_from_source(prefix+'mini.csv')
+        works_qu, youth_qu = self.script.works_from_source(filename)
 
         # The four works we wanted.
         eq_(4, works_qu.count())
@@ -222,8 +209,8 @@ class TestCustomListUploadScript(DatabaseTest):
         eq_(None, youth_qu)
 
         # A CSV with youth entries returns those works, too.
-        (works, works_by_urn) = self._create_works_from_csv('youth.csv')
-        works_qu, youth_qu = self.script.works_from_source(prefix+'youth.csv')
+        works, works_by_urn, filename = self._create_works_from_csv('youth.csv')
+        works_qu, youth_qu = self.script.works_from_source(filename)
 
         eq_(2, youth_qu.count())
         assert works_by_urn['urn:isbn:9781682280010'] in youth_qu
@@ -236,7 +223,7 @@ class TestCustomListUploadScript(DatabaseTest):
         eq_([False, False], [ignored_work in qu for qu in [works_qu, youth_qu]])
 
         # If the CSV indicates that a cover should be removed, it's gone.
-        (works, works_by_urn) = self._create_works_from_csv('hidden_cover.csv')
+        works, works_by_urn, filename = self._create_works_from_csv('hidden_cover.csv')
         for work in works:
             work.presentation_edition.cover_full_url = 'cover.png'
             work.presentation_edition.cover_thumbnail_url = 'thumbnail.jpg'
@@ -248,12 +235,41 @@ class TestCustomListUploadScript(DatabaseTest):
             eq_(2, entries.count('thumbnail.jpg'))
         self._db.commit()
 
-        works_qu, youth_qu = self.script.works_from_source(prefix+'hidden_cover.csv')
+        works_qu, youth_qu = self.script.works_from_source(filename)
         eq_(2, works_qu.count())
         hidden_work = works_by_urn['urn:isbn:9781682280027']
         hidden_work_entries = hidden_work.simple_opds_entry+hidden_work.verbose_opds_entry
         assert 'cover.png' not in hidden_work_entries
         assert 'thumbnail.jpg' not in hidden_work_entries
+
+    def test_edit_list(self):
+        custom_list = self._customlist(num_entries=0)[0]
+        mini_works, works_by_urn, filename = self._create_works_from_csv('mini.csv')
+
+        # You can create a new list.
+        works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in mini_works]))
+        self.script.edit_list(custom_list, works_qu, 'new')
+        eq_(4, len(custom_list.entries))
+
+        # You can append to an existing list.
+        sample_works, works_by_urn, filename = self._create_works_from_csv('sample.csv')
+        works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in sample_works]))
+        self.script.edit_list(custom_list, works_qu, 'append')
+        eq_(7, len(custom_list.entries))
+
+        # You can replace an existing list.
+        other_work = self._work(with_license_pool=True)
+        works = mini_works + [other_work]
+        works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in works]))
+        self.script.edit_list(custom_list, works_qu, 'replace')
+        eq_(5, len(custom_list.entries))
+        assert custom_list.entries_for_work(other_work)
+
+        # You can remove from an existing list.
+        works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in sample_works]))
+        self.script.edit_list(custom_list, works_qu, 'remove')
+        eq_(1, len(custom_list.entries))
+        assert custom_list.entries_for_work(other_work)
 
 
 class TestStaticFeedGenerationScript(DatabaseTest):
