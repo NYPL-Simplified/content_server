@@ -8,6 +8,8 @@ from nose.tools import (
 )
 from os import path
 
+from sqlalchemy.orm.exc import NoResultFound
+
 from . import DatabaseTest
 
 from ..core.external_search import DummyExternalSearchIndex
@@ -17,6 +19,7 @@ from ..core.lane import (
     Pagination,
 )
 from ..core.model import (
+    DataSource,
     Edition,
     Hyperlink,
     Identifier,
@@ -25,10 +28,15 @@ from ..core.model import (
     Work,
 )
 
+from ..config import (
+    Configuration,
+    temp_config,
+)
 from ..lanes import StaticFeedBaseLane
 from ..opds import StaticFeedAnnotator
 from ..s3 import DummyS3Uploader
 from ..scripts import (
+    CustomListUploadScript,
     StaticFeedCSVExportScript,
     StaticFeedGenerationScript,
 )
@@ -107,6 +115,171 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
 
         nodes = self.script.get_base_categories('tests/files/scripts/mini.csv')
         eq_(3, len(nodes))
+
+
+class TestCustomListUploadScript(DatabaseTest):
+
+    def setup(self):
+        super(TestCustomListUploadScript, self).setup()
+        self.script = CustomListUploadScript(_db=self._db)
+
+    def _create_works_from_csv(self, csv_filename):
+        local_filename = os.path.join('tests', 'files', 'scripts', csv_filename)
+        csv_filename = os.path.abspath(local_filename)
+
+        # Create all of the identifiers in the csv.
+        identifiers = list()
+        with open(csv_filename) as f:
+            text = f.read()
+            rows = text.split('\n')
+            for row in rows:
+                urn = unicode(row.split(',')[0].strip())
+                if urn and urn != u'urn':
+                    identifier = Identifier.parse_urn(self._db, urn)[0]
+                    identifiers.append(identifier)
+
+        # Prepare the works expected by the csv.
+        works = list()
+        works_by_urn = dict()
+        for identifier in identifiers:
+            work = self._work(with_open_access_download=True)
+            license_pool = work.license_pools[0]
+
+            old_identifier = license_pool.identifier
+            old_identifier.equivalent_to(
+                license_pool.data_source, identifier, 1
+            )
+            work.license_pools[0].identifier = identifier
+
+            works.append(work)
+            works_by_urn[identifier.urn] = work
+        self._db.commit()
+
+        # Return everything you might need for a test.
+        return works, works_by_urn, local_filename
+
+    def test_fetch_editable_list(self):
+        # Trying to edit a list that doesn't exist raises an error.
+        for option in self.script.EDIT_OPTIONS:
+            assert_raises(NoResultFound, self.script.fetch_editable_list,
+                u'A List', u'my-list', option)
+
+        # Creating a new list without name overlap does not raise an
+        # error and does not return a CustomList.
+        result = self.script.fetch_editable_list(u'A List', u'my-list', 'new')
+        eq_(None, result)
+
+        # Let's make a CustomList!
+        custom_list = self._customlist(
+            foreign_identifier=u'a-list', name=u'My List', num_entries=0,
+            data_source_name=DataSource.LIBRARY_STAFF
+        )[0]
+
+        # Trying to create a new list that has the same foreign identifier
+        # raises an error.
+        assert_raises(self.script.CustomListAlreadyExists,
+            self.script.fetch_editable_list, u'A List', u'a-list', 'new')
+
+        # Trying to edit the list in any way returns the list, though.
+        for option in self.script.EDIT_OPTIONS:
+            result = self.script.fetch_editable_list(u'A List', u'a-list', option)
+            eq_(custom_list, result)
+
+    def test_works_from_source(self):
+        works, works_by_urn, filename = self._create_works_from_csv('mini.csv')
+        # Create an extra work to confirm that it's ignored.
+        ignored_work = self._work(with_open_access_download=True)
+
+        # A basic CSV returns what we expect.
+        works_qu, youth_qu, featured = self.script.works_from_source(filename)
+
+        # The four works we wanted.
+        eq_(4, works_qu.count())
+        eq_(sorted(works), sorted(works_qu.all()))
+
+        # The work we didn't ask for isn't included.
+        assert ignored_work not in works_qu
+
+        # And when the CSV has no youth entries, no youth query is returned.
+        eq_(None, youth_qu)
+
+        # A CSV with youth entries returns those works, too.
+        works, works_by_urn, filename = self._create_works_from_csv('youth.csv')
+        works_qu, youth_qu, featured = self.script.works_from_source(filename)
+
+        eq_(2, youth_qu.count())
+        assert works_by_urn['urn:isbn:9781682280010'] in youth_qu
+        assert works_by_urn['urn:isbn:9781682280027'] in youth_qu
+
+        # Plus all the works, as you do.
+        eq_(sorted(works), sorted(works_qu.all()))
+
+        # But the work we didn't ask for still isn't included.
+        eq_([False, False], [ignored_work in qu for qu in [works_qu, youth_qu]])
+
+        # If the CSV indicates that a cover should be removed, it's gone.
+        works, works_by_urn, filename = self._create_works_from_csv('hidden_cover.csv')
+        for work in works:
+            work.presentation_edition.cover_full_url = 'cover.png'
+            work.presentation_edition.cover_thumbnail_url = 'thumbnail.jpg'
+            work.calculate_opds_entries()
+
+            # Ensure the covers are listed.
+            entries = work.simple_opds_entry+work.verbose_opds_entry
+            eq_(2, entries.count('cover.png'))
+            eq_(2, entries.count('thumbnail.jpg'))
+        self._db.commit()
+
+        with temp_config() as config:
+            config[Configuration.POLICIES] = {
+                Configuration.MINIMUM_FEATURED_QUALITY : 0.90
+            }
+            works_qu, youth_qu, featured = self.script.works_from_source(filename)
+
+        eq_(2, works_qu.count())
+        hidden_work = works_by_urn['urn:isbn:9781682280027']
+        hidden_work_entries = hidden_work.simple_opds_entry+hidden_work.verbose_opds_entry
+        assert 'cover.png' not in hidden_work_entries
+        assert 'thumbnail.jpg' not in hidden_work_entries
+
+        # If the CSV indicates that a work should be featured, its
+        # Identifier is returned in the featured list.
+        featured_work = works_by_urn['urn:isbn:9781682280065']
+        featured_identifier = featured_work.license_pools[0].identifier
+        eq_([featured_identifier], featured)
+
+    def test_edit_list(self):
+        custom_list = self._customlist(num_entries=0)[0]
+        mini_works, works_by_urn, filename = self._create_works_from_csv('mini.csv')
+
+        # You can create a new list.
+        works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in mini_works]))
+        self.script.edit_list(custom_list, works_qu, 'new', [])
+        eq_(4, len(custom_list.entries))
+
+        # You can append to an existing list.
+        sample_works, works_by_urn, filename = self._create_works_from_csv('sample.csv')
+        works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in sample_works]))
+        self.script.edit_list(custom_list, works_qu, 'append', [])
+        eq_(7, len(custom_list.entries))
+
+        # You can replace an existing list.
+        other_work = self._work(with_license_pool=True)
+        other_identifier = other_work.license_pools[0].identifier
+        works = mini_works + [other_work]
+        works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in works]))
+        self.script.edit_list(custom_list, works_qu, 'replace', [other_identifier])
+        eq_(5, len(custom_list.entries))
+        [entry] = custom_list.entries_for_work(other_work)
+        # Also, works that are requested to be featured, are featured.
+        eq_(True, entry.featured)
+
+        # You can remove from an existing list.
+        works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in sample_works]))
+        self.script.edit_list(custom_list, works_qu, 'remove', [])
+        eq_(1, len(custom_list.entries))
+        assert custom_list.entries_for_work(other_work)
+
 
 class TestStaticFeedGenerationScript(DatabaseTest):
 
@@ -196,7 +369,12 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         url = 'https://ls.org'
         cmd_args = ['tests/files/scripts/mini.csv', '-d', url, '-u']
         cmd_args += args
-        self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+
+        with temp_config() as config:
+            config[Configuration.POLICIES] = {
+                Configuration.FEATURED_LANE_SIZE : 4
+            }
+            self.script.run(uploader=self.uploader, cmd_args=cmd_args)
         return w1, w2, w3, w4
 
     def test_run_with_csv(self):
@@ -310,63 +488,6 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             [license_link] = [l for l in feed.feed.links if l.rel == 'license']
             eq_(license_url, license_link.href)
             eq_('text/html', license_link.type)
-
-    def test_cover_suppression(self):
-        csv_content = (
-            "urn,hide_cover"+
-            "\nurn:isbn:9781682280065,"+
-            "\nurn:isbn:9781682280027,x"
-        )
-        # Create a temporary csv file.
-        csv_fd, csv_fpath = tempfile.mkstemp(
-            suffix='.csv', dir=os.getcwd()
-        )
-        with open(csv_fpath, 'w') as csv_file:
-            # Write content to the file.
-            csv_file.write(csv_content)
-
-        # Create some works to be found.
-        w1 = self._work(with_open_access_download=True)
-        w2 = self._work(with_open_access_download=True)
-
-        csv_isbns = ['9781682280065', '9781682280027']
-        for idx, work in enumerate([w1, w2]):
-            # Give the work an ISBN that exists in the CSV.
-            identifier = work.license_pools[0].identifier
-            identifier.type = Identifier.ISBN
-            identifier.identifier = csv_isbns[idx]
-
-            # Give the work's presentation edition some cover urls.
-            work.presentation_edition.cover_full_url = 'cover.png'
-            work.presentation_edition.cover_thumbnail_url = 'thumbnail.jpg'
-            work.calculate_opds_entries()
-        self._db.commit()
-
-        try:
-            # Run the script.
-            cmd_args = [csv_fpath, '-d', 'https://ls.org', '-u']
-            search = DummyExternalSearchIndex()
-            self.script.run(
-                uploader=self.uploader,
-                cmd_args=cmd_args,
-                search_index_client=search
-            )
-        finally:
-            # Close and remove the temporary csv file.
-            os.close(csv_fd)
-            os.remove(csv_fpath)
-
-        for content in self.uploader.content:
-            feed = feedparser.parse(content)
-            entries = feed.entries
-            [covered] = [e for e in entries if e.title == w1.title]
-            image_links = [l for l in covered.links if l.rel.startswith(Hyperlink.IMAGE)]
-            eq_(2, len(image_links))
-            eq_(sorted(['cover.png', 'thumbnail.jpg']), sorted([l.href for l in image_links]))
-
-            [suppressed] = [e for e in entries if e.title == w2.title]
-            image_links = [l for l in suppressed.links if l.rel.startswith(Hyperlink.IMAGE)]
-            eq_([], image_links)
 
     def test_make_lanes_from_csv(self):
         csv_filename = os.path.abspath('tests/files/scripts/sample.csv')
