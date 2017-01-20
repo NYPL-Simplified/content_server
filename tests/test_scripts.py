@@ -369,7 +369,12 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         url = 'https://ls.org'
         cmd_args = ['tests/files/scripts/mini.csv', '-d', url, '-u']
         cmd_args += args
-        self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+
+        with temp_config() as config:
+            config[Configuration.POLICIES] = {
+                Configuration.FEATURED_LANE_SIZE : 4
+            }
+            self.script.run(uploader=self.uploader, cmd_args=cmd_args)
         return w1, w2, w3, w4
 
     def test_run_with_csv(self):
