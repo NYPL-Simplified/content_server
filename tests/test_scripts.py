@@ -185,19 +185,13 @@ class TestCustomListUploadScript(DatabaseTest):
             result = self.script.fetch_editable_list(u'A List', u'a-list', option)
             eq_(custom_list, result)
 
-        # Unless the list was created elsewhere.
-        custom_list.data_source = DataSource.lookup(self._db, DataSource.NYT)
-        for option in self.script.EDIT_OPTIONS:
-            assert_raises(self.script.UneditableCustomList,
-                self.script.fetch_editable_list, u'A List', u'a-list', option)
-
     def test_works_from_source(self):
         works, works_by_urn, filename = self._create_works_from_csv('mini.csv')
         # Create an extra work to confirm that it's ignored.
         ignored_work = self._work(with_open_access_download=True)
 
         # A basic CSV returns what we expect.
-        works_qu, youth_qu = self.script.works_from_source(filename)
+        works_qu, youth_qu, featured = self.script.works_from_source(filename)
 
         # The four works we wanted.
         eq_(4, works_qu.count())
@@ -211,7 +205,7 @@ class TestCustomListUploadScript(DatabaseTest):
 
         # A CSV with youth entries returns those works, too.
         works, works_by_urn, filename = self._create_works_from_csv('youth.csv')
-        works_qu, youth_qu = self.script.works_from_source(filename)
+        works_qu, youth_qu, featured = self.script.works_from_source(filename)
 
         eq_(2, youth_qu.count())
         assert works_by_urn['urn:isbn:9781682280010'] in youth_qu
@@ -240,7 +234,7 @@ class TestCustomListUploadScript(DatabaseTest):
             config[Configuration.POLICIES] = {
                 Configuration.MINIMUM_FEATURED_QUALITY : 0.90
             }
-            works_qu, youth_qu = self.script.works_from_source(filename)
+            works_qu, youth_qu, featured = self.script.works_from_source(filename)
 
         eq_(2, works_qu.count())
         hidden_work = works_by_urn['urn:isbn:9781682280027']
@@ -248,10 +242,11 @@ class TestCustomListUploadScript(DatabaseTest):
         assert 'cover.png' not in hidden_work_entries
         assert 'thumbnail.jpg' not in hidden_work_entries
 
-        # If the CSV indicates that a work should be featured, it's given
-        # an appropriate quality rating.
+        # If the CSV indicates that a work should be featured, its
+        # Identifier is returned in the featured list.
         featured_work = works_by_urn['urn:isbn:9781682280065']
-        eq_(True, float(featured_work.quality)==0.9)
+        featured_identifier = featured_work.license_pools[0].identifier
+        eq_([featured_identifier], featured)
 
     def test_edit_list(self):
         custom_list = self._customlist(num_entries=0)[0]
@@ -259,26 +254,29 @@ class TestCustomListUploadScript(DatabaseTest):
 
         # You can create a new list.
         works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in mini_works]))
-        self.script.edit_list(custom_list, works_qu, 'new')
+        self.script.edit_list(custom_list, works_qu, 'new', [])
         eq_(4, len(custom_list.entries))
 
         # You can append to an existing list.
         sample_works, works_by_urn, filename = self._create_works_from_csv('sample.csv')
         works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in sample_works]))
-        self.script.edit_list(custom_list, works_qu, 'append')
+        self.script.edit_list(custom_list, works_qu, 'append', [])
         eq_(7, len(custom_list.entries))
 
         # You can replace an existing list.
         other_work = self._work(with_license_pool=True)
+        other_identifier = other_work.license_pools[0].identifier
         works = mini_works + [other_work]
         works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in works]))
-        self.script.edit_list(custom_list, works_qu, 'replace')
+        self.script.edit_list(custom_list, works_qu, 'replace', [other_identifier])
         eq_(5, len(custom_list.entries))
-        assert custom_list.entries_for_work(other_work)
+        [entry] = custom_list.entries_for_work(other_work)
+        # Also, works that are requested to be featured, are featured.
+        eq_(True, entry.featured)
 
         # You can remove from an existing list.
         works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in sample_works]))
-        self.script.edit_list(custom_list, works_qu, 'remove')
+        self.script.edit_list(custom_list, works_qu, 'remove', [])
         eq_(1, len(custom_list.entries))
         assert custom_list.entries_for_work(other_work)
 
