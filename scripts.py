@@ -12,10 +12,7 @@ from sqlalchemy import (
     not_,
     or_,
 )
-from sqlalchemy.orm import (
-    joinedload,
-    contains_eager,
-)
+from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.exc import (
     NoResultFound,
 )
@@ -747,20 +744,17 @@ class CustomListUploadScript(StaticFeedScript):
             youth_list_name = list_name + u' - Children'
             youth_list_id = list_id + u'_children'
             created_at = datetime.utcnow()
-            if save_new:
-                # We're creating a new youth list as well.
-                youth_list = create(
-                    self._db, CustomList,
-                    name=youth_list_name,
-                    data_source=self.source,
-                    foreign_identifier=youth_list_id,
-                    created=created_at,
-                    updated=created_at
-                )[0]
-            else:
-                # We may or may not be creating a new youth list.
-                get_one_or_create(self._db, CustomList)
-            self.edit_list(custom_list, works, save_option, featured_identifiers)
+
+            # We may or may not be altering a new youth list.
+            create_method_kwargs=dict(
+                name=youth_list_name, created=created_at, updated=created_at)
+            youth_list = get_one_or_create(
+                self._db, CustomList,
+                data_source=self.source,
+                foreign_identifier=youth_list_id,
+                create_method_kwargs=create_method_kwargs)[0]
+
+            self.edit_list(youth_list, youth_works, save_option, featured_identifiers)
 
     def fetch_editable_list(self, list_name, list_id, save_option):
         """Returns a CustomList from the database or None if a new
@@ -817,7 +811,7 @@ class CustomListUploadScript(StaticFeedScript):
         works_qu = Work.from_identifiers(self._db, identifiers)
         works_qu = works_qu.options(
             joinedload(Work.license_pools),
-            contains_eager(Work.presentation_edition)
+            joinedload(Work.presentation_edition)
         )
 
         youth_works_qu = None
