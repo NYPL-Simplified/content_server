@@ -139,14 +139,20 @@ class TestCustomListUploadScript(DatabaseTest):
                     identifier = Identifier.parse_urn(self._db, urn)[0]
                     identifiers.append(identifier)
 
-        # Prepare the works expected by the csv.
-        works = list()
+        # Get any Works that already exist.
         works_by_urn = dict()
+        works = Work.from_identifiers(self._db, identifiers).all()
+        for work in works:
+            identifier = work.license_pools[0].identifier
+            identifiers.remove(identifier)
+            works_by_urn[identifier.urn] = work
+
+        # Prepare additional works expected by the csv.
         for identifier in identifiers:
-            edition = self._edition(
+            edition, lp = self._edition(
                 with_open_access_download=True,
                 identifier_type=identifier.type,
-                identifier_id=identifier.identifier)[0]
+                identifier_id=identifier.identifier)
             work = self._work(presentation_edition=edition)
 
             works.append(work)
