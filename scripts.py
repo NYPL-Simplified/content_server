@@ -760,7 +760,7 @@ class CustomListUploadScript(StaticFeedScript):
             else:
                 # We may or may not be creating a new youth list.
                 get_one_or_create(self._db, CustomList)
-            self.edit_list(custom_list, works, save_option)
+            self.edit_list(custom_list, works, save_option, featured_identifiers)
 
     def fetch_editable_list(self, list_name, list_id, save_option):
         """Returns a CustomList from the database or None if a new
