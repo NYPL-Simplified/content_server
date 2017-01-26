@@ -753,8 +753,9 @@ class CustomListUploadScript(StaticFeedScript):
                 data_source=self.source,
                 foreign_identifier=youth_list_id,
                 create_method_kwargs=create_method_kwargs)[0]
-
             self.edit_list(youth_list, youth_works, save_option, featured_identifiers)
+
+        self._db.commit()
 
     def fetch_editable_list(self, list_name, list_id, save_option):
         """Returns a CustomList from the database or None if a new
