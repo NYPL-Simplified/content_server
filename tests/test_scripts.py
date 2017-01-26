@@ -327,7 +327,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         urn1 = requested.license_pools[0].identifier.urn
         urn2 = suppressed.license_pools[0].identifier.urn
 
-        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org',
+        cmd_args = ['fake.csv', 'mta.librarysimplified.org',
                     '-u', '--urns', no_pool, urn1, urn2]
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
@@ -363,7 +363,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         w2 = self._work(with_open_access_download=True)
         urns = [work.license_pools[0].identifier.urn for work in [w1, w2]]
 
-        cmd_args = ['fake.csv', '-d', 'http://ls.org', '--page-size', '1',
+        cmd_args = ['fake.csv', 'http://ls.org', '--page-size', '1',
                     '-u', '--urns', urns[0], urns[1]]
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
@@ -393,7 +393,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         self._db.commit()
 
         url = 'https://ls.org'
-        cmd_args = ['tests/files/scripts/mini.csv', '-d', url, '-u']
+        cmd_args = ['tests/files/scripts/mini.csv', url, '-u']
         cmd_args += args
 
         with temp_config() as config:
@@ -406,7 +406,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
     def test_run_with_csv(self):
         # An incorrect CSV document raises a ValueError when there are
         # also no URNs present.
-        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
+        cmd_args = ['fake.csv', 'mta.librarysimplified.org', '-u']
         assert_raises(
             ValueError, self.script.run, uploader=self.uploader,
             cmd_args=cmd_args

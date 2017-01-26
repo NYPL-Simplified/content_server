@@ -926,7 +926,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             'source_csv', help='A CSV file to import URNs and Lane categories'
         )
         parser.add_argument(
-            '-d', '--domain', help='The domain where the feed will be placed.'
+            'domain', help='The domain where the feed will be placed.'
         )
         parser.add_argument(
             '-u', '--upload', action='store_true',
@@ -960,7 +960,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         feed_id = unicode(parsed.domain)
         page_size = parsed.page_size
 
-        if not (feed_id and (os.path.isfile(source_csv) or parsed.urns)):
+        if not (os.path.isfile(source_csv) or parsed.urns):
             # We can't build an OPDS feed or identify the required
             # Works without this information.
             raise ValueError('Please include all required arguments.')
