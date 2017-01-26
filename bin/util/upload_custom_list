@@ -8,10 +8,10 @@ replaced.
 This example replaces the "Banana-Specific Fiction" list with a
 completely new group of Identifiers.
 
-$ bin/util/upload_custom_list -r banana.csv "Banana-Specific Fiction"
+$ bin/util/upload_custom_list banana.csv "Banana-Specific Fiction" -rp
 
 The CustomList can later be uploaded or downloaded as a static feed using
-the `bin/util/create_static_feed` command.
+the `bin/util/create_static_feed_from_list` command.
 """
 import sys
 from nose.tools import set_trace

@@ -734,6 +734,7 @@ class CustomListUploadScript(StaticFeedScript):
                 self._db, CustomList,
                 data_source=self.source,
                 foreign_identifier=list_id,
+                create_method_kwargs=create_method_kwargs
             )
 
         works, youth_works, featured_identifiers = self.works_from_source(source_csv)
@@ -841,7 +842,6 @@ class CustomListUploadScript(StaticFeedScript):
                 input_editions, featured_identifiers
             )
             [custom_list.add_entry(e, featured=f) for e, f in input_editions]
-            return
 
         if save_option == 'remove':
             [custom_list.remove_entry(e) for e in input_editions]
@@ -860,6 +860,9 @@ class CustomListUploadScript(StaticFeedScript):
                 input_editions, featured_identifiers
             )
             [custom_list.add_entry(e, featured=f) for e, f in input_editions]
+
+        if save_option in self.EDIT_OPTIONS:
+            custom_list.updated = datetime.utcnow()
 
     def editions_with_featured_status(self, editions, featured_identifiers):
         """Evaluates which editions from a list of editions have been
@@ -950,7 +953,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
             help='Specific identifier urns to process, esp. for testing'
         )
         return parser
-
 
     def run(self, uploader=None, cmd_args=None, search_index_client=None):
         parsed = self.arg_parser().parse_args(cmd_args)
@@ -1059,10 +1061,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             # It's slow to do these individually, but this won't run very often.
             for work in full_query.all():
-                # TODO: A number of works are not able to be added to the feed
-                # or search because they are loaded from the database without
-                # all of their LicensePools (i.e. a single, superceded LicensePool).
-                # Make it stop.
                 if StaticFeedAnnotator.active_licensepool_for(work):
                     doc = work.to_search_document()
                     doc["_index"] = search_client.works_index
@@ -1102,13 +1100,23 @@ class StaticFeedGenerationScript(StaticFeedScript):
             if not license_pool:
                 detail_list += (bullet + "%r : No LicensePool found." % identifier)
                 continue
+
+            license_pool_message = bullet + "%r : LicensePool has been "
             if license_pool.suppressed:
-                detail_list +=  (bullet + "%r : LicensePool has been suppressed." % license_pool)
+                message = license_pool_message + "suppressed."
+                detail_list +=  (message % license_pool)
                 continue
+            if license_pool.superceded:
+                message = license_pool_message + "superceded."
+                detail_list +=  (message % license_pool)
+                continue
+
             work = license_pool.work
             if not work:
                 detail_list += (bullet + "%r : No Work found." % license_pool)
                 continue
+            if not work.presentation_ready:
+                detail_list += (bullet + "%r : Work is not presentation ready" % work)
             detail_list += (bullet + "%r : Unknown error." % identifier)
         self.log.warn(
             "%i identifiers could not be added to the feed. %s",
