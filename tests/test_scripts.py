@@ -19,6 +19,7 @@ from ..core.lane import (
     Pagination,
 )
 from ..core.model import (
+    CustomList,
     DataSource,
     Edition,
     Hyperlink,
@@ -138,18 +139,21 @@ class TestCustomListUploadScript(DatabaseTest):
                     identifier = Identifier.parse_urn(self._db, urn)[0]
                     identifiers.append(identifier)
 
-        # Prepare the works expected by the csv.
-        works = list()
+        # Get any Works that already exist.
         works_by_urn = dict()
-        for identifier in identifiers:
-            work = self._work(with_open_access_download=True)
-            license_pool = work.license_pools[0]
+        works = Work.from_identifiers(self._db, identifiers).all()
+        for work in works:
+            identifier = work.license_pools[0].identifier
+            identifiers.remove(identifier)
+            works_by_urn[identifier.urn] = work
 
-            old_identifier = license_pool.identifier
-            old_identifier.equivalent_to(
-                license_pool.data_source, identifier, 1
-            )
-            work.license_pools[0].identifier = identifier
+        # Prepare additional works expected by the csv.
+        for identifier in identifiers:
+            edition, lp = self._edition(
+                with_open_access_download=True,
+                identifier_type=identifier.type,
+                identifier_id=identifier.identifier)
+            work = self._work(presentation_edition=edition)
 
             works.append(work)
             works_by_urn[identifier.urn] = work
@@ -250,7 +254,7 @@ class TestCustomListUploadScript(DatabaseTest):
 
     def test_edit_list(self):
         custom_list = self._customlist(num_entries=0)[0]
-        mini_works, works_by_urn, filename = self._create_works_from_csv('mini.csv')
+        mini_works, works_by_urn, _f = self._create_works_from_csv('mini.csv')
 
         # You can create a new list.
         works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in mini_works]))
@@ -258,7 +262,7 @@ class TestCustomListUploadScript(DatabaseTest):
         eq_(4, len(custom_list.entries))
 
         # You can append to an existing list.
-        sample_works, works_by_urn, filename = self._create_works_from_csv('sample.csv')
+        sample_works, works_by_urn, _f = self._create_works_from_csv('sample.csv')
         works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in sample_works]))
         self.script.edit_list(custom_list, works_qu, 'append', [])
         eq_(7, len(custom_list.entries))
@@ -279,6 +283,28 @@ class TestCustomListUploadScript(DatabaseTest):
         self.script.edit_list(custom_list, works_qu, 'remove', [])
         eq_(1, len(custom_list.entries))
         assert custom_list.entries_for_work(other_work)
+
+    def test_run(self):
+        works, works_by_urn, _f = self._create_works_from_csv('youth.csv')
+        youth_urns = ['urn:isbn:9781682280010', 'urn:isbn:9781682280027']
+
+        cmd_args = ['tests/files/scripts/youth.csv', 'Test Lane', '-n']
+        self.script.run(cmd_args=cmd_args)
+
+        # Two CustomLists were created.
+        lists = self._db.query(CustomList).all()
+        eq_(2, len(lists))
+        [youth_list, full_list] = sorted(lists, key=lambda l: len(l.entries))
+
+        # Only the youth works are in the youth list.
+        eq_(2, len(youth_list.entries))
+        for urn in youth_urns:
+            eq_(1, len(youth_list.entries_for_work(works_by_urn[urn])))
+
+        # All of the works are in the full list.
+        eq_(7, len(full_list.entries))
+        for urn, work in works_by_urn.items():
+            eq_(1, len(full_list.entries_for_work(work)))
 
 
 class TestStaticFeedGenerationScript(DatabaseTest):
