@@ -16,9 +16,9 @@ from core.model import (
 try:
     _db = production_session()
 
-    # One of these tags ends with whitespace, so fix that first.
-    earth_sciences = _db.query(Subject).filter(Subject.name==u'Earth Sciences ')
-    for subject in earth_sciences:
+    # Some of these tags end with whitespace, so fix that first.
+    trailing = _db.query(Subject).filter(Subject.name.like(u"% "))
+    for subject in trailing:
         subject.name = subject.name.strip()
     _db.commit()
 
