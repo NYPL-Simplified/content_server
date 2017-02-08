@@ -38,6 +38,7 @@ from ..opds import StaticFeedAnnotator
 from ..s3 import DummyS3Uploader
 from ..scripts import (
     CustomListUploadScript,
+    FeedGenerationScript,
     StaticFeedCSVExportScript,
     StaticFeedGenerationScript,
 )
@@ -305,6 +306,92 @@ class TestCustomListUploadScript(DatabaseTest):
         eq_(7, len(full_list.entries))
         for urn, work in works_by_urn.items():
             eq_(1, len(full_list.entries_for_work(work)))
+
+
+class TestFeedGenerationScript(DatabaseTest):
+
+    def setup(self):
+        super(TestFeedGenerationScript, self).setup()
+        self.uploader = DummyS3Uploader()
+        self.script = FeedGenerationScript(_db=self._db)
+
+    def test_create_feeds(self):
+        omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
+        alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
+        zeta = self._work(title='Zeta', authors='Phi', with_open_access_download=True)
+
+        identifiers = list()
+        for work in [omega, alpha, zeta]:
+            identifier = work.license_pools[0].identifier
+            identifiers.append(identifier)
+        lane = StaticFeedBaseLane(
+            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+        )
+        annotator = StaticFeedAnnotator('https://mta.librarysimplified.org')
+
+        results = list(self.script.create_feeds([lane], annotator))
+
+        eq_(2, len(results))
+        eq_(['index', 'index_author'], sorted([r[0] for r in results]))
+        for filename, [feed] in results:
+            eq_(True, isinstance(feed, unicode))
+            parsed = feedparser.parse(feed)
+            [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
+            if filename == 'index':
+                # The entries are sorted by title, by default.
+                eq_('Title', active_facet_link.get('title'))
+                titles = [e.title for e in parsed.entries]
+                eq_(['Alpha', 'Omega', 'Zeta'], titles)
+
+            if filename == 'index_author':
+                # The entries can also be sorted by author.
+                eq_('Author', active_facet_link.get('title'))
+                authors = [e.simplified_sort_name for e in parsed.entries]
+                eq_(['Iota', 'Phi', 'Theta'], authors)
+
+    def test_create_feed_pages(self):
+        w1 = self._work(with_open_access_download=True)
+        w2 = self._work(with_open_access_download=True)
+
+        identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
+
+        pagination = Pagination(size=1)
+        lane = StaticFeedBaseLane(
+            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+        )
+        facet = Facets('main', 'always', 'author')
+        annotator = StaticFeedAnnotator('https://ls.org', lane)
+
+        result = self.script.create_feed_pages(
+            lane, pagination, 'https://ls.org', annotator, facet
+        )
+
+        # Two feeds are returned with the proper links.
+        [first, second] = result
+        def links_by_rel(parsed_feed, rel):
+            return [l for l in parsed_feed.feed.links if l['rel']==rel]
+
+        parsed = feedparser.parse(first)
+        [entry] = parsed.entries
+        eq_(w1.title, entry.title)
+        eq_(w1.author, entry.simplified_sort_name)
+
+        [next_link] = links_by_rel(parsed, 'next')
+        eq_(next_link.href, 'https://ls.org/index_author_2.xml')
+        eq_([], links_by_rel(parsed, 'previous'))
+        eq_([], links_by_rel(parsed, 'first'))
+
+        parsed = feedparser.parse(second)
+        [entry] = parsed.entries
+        eq_(w2.title, entry.title)
+        eq_(w2.author, entry.simplified_sort_name)
+
+        [previous_link] = links_by_rel(parsed, 'previous')
+        [first_link] = links_by_rel(parsed, 'first')
+        first = 'https://ls.org/index_author.xml'
+        eq_(previous_link.href, first)
+        eq_(first_link.href, first)
+        eq_([], links_by_rel(parsed, 'next'))
 
 
 class TestStaticFeedGenerationScript(DatabaseTest):
@@ -604,81 +691,3 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             eq_(expected[lane.name], lane.languages)
             for sublane in lane.sublanes:
                 eq_(expected[lane.name], sublane.languages)
-
-    def test_create_feeds(self):
-        omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
-        alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
-        zeta = self._work(title='Zeta', authors='Phi', with_open_access_download=True)
-
-        identifiers = list()
-        for work in [omega, alpha, zeta]:
-            identifier = work.license_pools[0].identifier
-            identifiers.append(identifier)
-        lane = StaticFeedBaseLane(
-            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
-        )
-        annotator = StaticFeedAnnotator('https://mta.librarysimplified.org')
-
-        results = list(self.script.create_feeds([lane], 50, annotator))
-
-        eq_(2, len(results))
-        eq_(['index', 'index_author'], sorted([r[0] for r in results]))
-        for filename, [feed] in results:
-            eq_(True, isinstance(feed, unicode))
-            parsed = feedparser.parse(feed)
-            [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
-            if filename == 'index':
-                # The entries are sorted by title, by default.
-                eq_('Title', active_facet_link.get('title'))
-                titles = [e.title for e in parsed.entries]
-                eq_(['Alpha', 'Omega', 'Zeta'], titles)
-
-            if filename == 'index_author':
-                # The entries can also be sorted by author.
-                eq_('Author', active_facet_link.get('title'))
-                authors = [e.simplified_sort_name for e in parsed.entries]
-                eq_(['Iota', 'Phi', 'Theta'], authors)
-
-    def test_create_feed_pages(self):
-        w1 = self._work(with_open_access_download=True)
-        w2 = self._work(with_open_access_download=True)
-
-        identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
-
-        pagination = Pagination(size=1)
-        lane = StaticFeedBaseLane(
-            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
-        )
-        facet = Facets('main', 'always', 'author')
-        annotator = StaticFeedAnnotator('https://ls.org', lane)
-
-        result = self.script.create_feed_pages(
-            lane, pagination, 'https://ls.org', annotator, facet
-        )
-
-        # Two feeds are returned with the proper links.
-        [first, second] = result
-        def links_by_rel(parsed_feed, rel):
-            return [l for l in parsed_feed.feed.links if l['rel']==rel]
-
-        parsed = feedparser.parse(first)
-        [entry] = parsed.entries
-        eq_(w1.title, entry.title)
-        eq_(w1.author, entry.simplified_sort_name)
-
-        [next_link] = links_by_rel(parsed, 'next')
-        eq_(next_link.href, 'https://ls.org/index_author_2.xml')
-        eq_([], links_by_rel(parsed, 'previous'))
-        eq_([], links_by_rel(parsed, 'first'))
-
-        parsed = feedparser.parse(second)
-        [entry] = parsed.entries
-        eq_(w2.title, entry.title)
-        eq_(w2.author, entry.simplified_sort_name)
-
-        [previous_link] = links_by_rel(parsed, 'previous')
-        [first_link] = links_by_rel(parsed, 'first')
-        first = 'https://ls.org/index_author.xml'
-        eq_(previous_link.href, first)
-        eq_(first_link.href, first)
-        eq_([], links_by_rel(parsed, 'next'))

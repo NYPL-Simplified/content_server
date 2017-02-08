@@ -951,7 +951,7 @@ class CustomListUploadScript(StaticFeedScript):
         return overwritten_editions
 
 
-class StaticFeedGenerationScript(StaticFeedScript):
+class FeedGenerationScript(StaticFeedScript):
 
     DEFAULT_ENABLED_FACETS = {
         Facets.ORDER_FACET_GROUP_NAME : [
@@ -964,6 +964,131 @@ class StaticFeedGenerationScript(StaticFeedScript):
             Facets.COLLECTION_FULL
         ]
     }
+
+    def feed_pages_by_filename(self, feed_id, full_lane, youth_lane=None,
+                               prefix='', license_link=None, include_search=False,
+                               enabled_facets=None, page_size=None):
+        """Creates and returns static feed content.
+
+        :return: A list of tuples (prospective filename, AcquistionFeed
+        representing the static feed)
+        """
+        feeds = list()
+        annotator = None
+        if youth_lane:
+            # When a youth lane exists, we create a navigation feed to
+            # assist with COPPA restrictions.
+            nav_feed = StaticCOPPANavigationFeed(
+                StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
+                youth_lane, full_lane,
+                prefix=prefix,
+                license_link=license_link,
+                include_search=include_search,
+            )
+            feeds.append((
+                prefix + StaticFeedCOPPAAnnotator.HOME_FILENAME,
+                [unicode(nav_feed)]))
+
+            annotator = StaticFeedCOPPAAnnotator(
+                feed_id, youth_lane,
+                prefix=prefix,
+                license_link=license_link,
+                include_search=include_search,
+            )
+
+            feeds += list(self.create_feeds(
+                [youth_lane], annotator,
+                enabled_facets=enabled_facets,
+                page_size=page_size
+            ))
+        else:
+            # Without a youth feed, we don't need to create a navigation feed.
+            annotator = StaticFeedAnnotator(
+                feed_id, full_lane,
+                prefix=prefix,
+                license_link=license_link,
+                include_search=include_search,
+            )
+
+        feeds += list(self.create_feeds(
+            [full_lane], annotator,
+            enabled_facets=enabled_facets,
+            page_size=page_size
+        ))
+        return feeds
+
+    def create_feeds(self, lanes, annotator, enabled_facets=None, page_size=None):
+        """Creates feeds for facets that may be required
+
+        :return: A dictionary of filenames pointing to a list of CachedFeed
+        objects representing pages
+        """
+        for lane in lanes:
+            annotator.reset(lane)
+            filename = annotator.lane_filename()
+            url = annotator.lane_url(lane)
+            if lane.sublanes:
+                # This is an intermediate lane, without its own works.
+                # It needs a groups feed.
+                self.log.info("Creating groups feed for lane: %s", lane.name)
+                feed = AcquisitionFeed.groups(
+                    self._db, lane.name, url, lane, annotator,
+                    cache_type=AcquisitionFeed.NO_CACHE,
+                    use_materialized_works=False
+                )
+                yield filename, [feed]
+
+                # Return filenames and feeds for any sublanes as well.
+                for filename, feeds in self.create_feeds(
+                    lane.sublanes, annotator
+                ):
+                    yield filename, feeds
+            else:
+                enabled_facets = enabled_facets or self.DEFAULT_ENABLED_FACETS
+                static_facets = Facets(
+                    collection=Facets.COLLECTION_FULL,
+                    availability=Facets.AVAILABLE_OPEN_ACCESS,
+                    order=Facets.ORDER_TITLE,
+                    enabled_facets=enabled_facets
+                )
+
+                self.log.info("Creating feed pages for lane: %s", lane.name)
+                for facet_group in list(static_facets.facet_groups):
+                    ordered_by, facet_obj = facet_group[1:3]
+                    pagination = Pagination.default()
+                    if page_size:
+                        pagination.size = page_size
+
+                    feed_pages = self.create_feed_pages(
+                        lane, pagination, url, annotator, facet_obj
+                    )
+
+                    if ordered_by != annotator.DEFAULT_ORDER:
+                        filename += ('_' + ordered_by)
+                    yield filename, feed_pages
+
+    def create_feed_pages(self, lane, pagination, lane_url, annotator, facet):
+        """Yields each page of the feed for a particular lane."""
+        pages = list()
+        previous_page = pagination.previous_page
+        while (not previous_page) or previous_page.has_next_page:
+            page = AcquisitionFeed.page(
+                self._db, lane.name, lane_url, lane,
+                annotator=annotator,
+                facets=facet,
+                pagination=pagination,
+                cache_type=AcquisitionFeed.NO_CACHE,
+                use_materialized_works=False
+            )
+            pages.append(page)
+
+            # Reset values to determine if next page should be created.
+            previous_page = pagination
+            pagination = pagination.next_page
+        return pages
+
+
+class StaticFeedGenerationScript(FeedGenerationScript):
 
     @classmethod
     def arg_parser(cls):
@@ -983,7 +1108,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
             help='The number of entries in each page feed'
         )
         parser.add_argument(
-            '--prefix', help='A string to prepend the feed filenames (e.g. "demo/")'
+            '--prefix', default='',
+            help='A string to prepend the feed filenames (e.g. "demo/")'
         )
         parser.add_argument(
             '--license', help='The url location of the licensing document for this feed'
@@ -1004,7 +1130,10 @@ class StaticFeedGenerationScript(StaticFeedScript):
         parsed = self.arg_parser().parse_args(cmd_args)
         source_csv = os.path.abspath(parsed.source_csv)
         feed_id = unicode(parsed.domain)
-        page_size = parsed.page_size
+        prefix = unicode(parsed.prefix)
+
+        # Determine if the resulting feeds should have a search link.
+        include_search = bool(parsed.search_url and parsed.search_index)
 
         if not (os.path.isfile(source_csv) or parsed.urns):
             # We can't build an OPDS feed or identify the required
@@ -1034,44 +1163,13 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 search_index_client=search_index_client
             )
 
-        # Determine if the feed should have a search link.
-        search = bool(parsed.search_url and parsed.search_index)
-
-        feeds = list()
-        if youth_lane:
-            # When a youth lane exists, we create a navigation feed to
-            # assist with COPPA restrictions.
-            nav_feed = StaticCOPPANavigationFeed(
-                StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
-                youth_lane, full_lane,
-                prefix=parsed.prefix,
-                license_link=parsed.license
-            )
-            prefix = parsed.prefix or ''
-            feeds.append((
-                prefix + StaticFeedCOPPAAnnotator.HOME_FILENAME,
-                [unicode(nav_feed)]
-            ))
-
-            annotator = StaticFeedCOPPAAnnotator(
-                feed_id, youth_lane,
-                prefix=parsed.prefix,
-                include_search=search,
-                license_link=parsed.license
-            )
-
-            youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
-            feeds += youth_feeds
-        else:
-            # Without a youth feed, we don't need to create a navigation feed.
-            annotator = StaticFeedAnnotator(
-                feed_id, full_lane,
-                prefix=parsed.prefix,
-                include_search=search,
-                license_link=parsed.license
-            )
-
-        feeds += list(self.create_feeds([full_lane], page_size, annotator))
+        feeds = self.feed_pages_by_filename(
+            feed_id, full_lane, youth_lane,
+            prefix=prefix,
+            license_link=parsed.license,
+            include_search=include_search,
+            page_size=parsed.page_size
+        )
 
         upload_files = list()
         for base_filename, feed_pages in feeds:
@@ -1257,73 +1355,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 parent=parent,
                 include_all=False
             )
-
-    def create_feeds(self, lanes, page_size, annotator):
-        """Creates feeds for facets that may be required
-
-        :return: A dictionary of filenames pointing to a list of CachedFeed
-        objects representing pages
-        """
-        for lane in lanes:
-            annotator.reset(lane)
-            filename = annotator.lane_filename()
-            url = annotator.lane_url(lane)
-            if lane.sublanes:
-                # This is an intermediate lane, without its own works.
-                # It needs a groups feed.
-                self.log.info("Creating groups feed for lane: %s", lane.name)
-                feed = AcquisitionFeed.groups(
-                    self._db, lane.name, url, lane, annotator,
-                    cache_type=AcquisitionFeed.NO_CACHE,
-                    use_materialized_works=False
-                )
-                yield filename, [feed]
-
-                # Return filenames and feeds for any sublanes as well.
-                for filename, feeds in self.create_feeds(
-                    lane.sublanes, page_size, annotator
-                ):
-                    yield filename, feeds
-            else:
-                static_facets = Facets(
-                    collection=Facets.COLLECTION_FULL,
-                    availability=Facets.AVAILABLE_OPEN_ACCESS,
-                    order=Facets.ORDER_TITLE,
-                    enabled_facets=self.DEFAULT_ENABLED_FACETS
-                )
-
-                self.log.info("Creating feed pages for lane: %s", lane.name)
-                for facet_group in list(static_facets.facet_groups):
-                    ordered_by, facet_obj = facet_group[1:3]
-
-                    pagination = Pagination(size=page_size)
-                    feed_pages = self.create_feed_pages(
-                        lane, pagination, url, annotator, facet_obj
-                    )
-
-                    if ordered_by != annotator.DEFAULT_ORDER:
-                        filename += ('_' + ordered_by)
-                    yield filename, feed_pages
-
-    def create_feed_pages(self, lane, pagination, lane_url, annotator, facet):
-        """Yields each page of the feed for a particular lane."""
-        pages = list()
-        previous_page = pagination.previous_page
-        while (not previous_page) or previous_page.has_next_page:
-            page = AcquisitionFeed.page(
-                self._db, lane.name, lane_url, lane,
-                annotator=annotator,
-                facets=facet,
-                pagination=pagination,
-                cache_type=AcquisitionFeed.NO_CACHE,
-                use_materialized_works=False
-            )
-            pages.append(page)
-
-            # Reset values to determine if next page should be created.
-            previous_page = pagination
-            pagination = pagination.next_page
-        return pages
 
     def create_representations(self, upload_files):
         representations = list()
