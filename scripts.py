@@ -285,6 +285,51 @@ class StaticFeedScript(Script):
             csv_reader.fieldnames
         )
 
+    def log_missing_identifiers(self, requested_identifiers, works_qu):
+        """Logs details about requested identifiers that could not be added
+        to the static feeds for whatever reason.
+        """
+        included_ids_qu = works_qu.with_labels().statement.\
+            with_only_columns([Identifier.id])
+        included_ids = self._db.execute(included_ids_qu)
+        included_ids = [i[0] for i in included_ids.fetchall()]
+
+        requested_ids = [i.id for i in requested_identifiers]
+        missing_ids = set(requested_ids).difference(included_ids)
+        if not missing_ids:
+            return
+
+        detail_list = ""
+        bullet = "\n    - "
+        for id in missing_ids:
+            identifier = self._db.query(Identifier).filter(Identifier.id==id).one()
+            license_pool = identifier.licensed_through
+            if not license_pool:
+                detail_list += (bullet + "%r : No LicensePool found." % identifier)
+                continue
+
+            license_pool_message = bullet + "%r : LicensePool has been "
+            if license_pool.suppressed:
+                message = license_pool_message + "suppressed."
+                detail_list +=  (message % license_pool)
+                continue
+            if license_pool.superceded:
+                message = license_pool_message + "superceded."
+                detail_list +=  (message % license_pool)
+                continue
+
+            work = license_pool.work
+            if not work:
+                detail_list += (bullet + "%r : No Work found." % license_pool)
+                continue
+            if not work.presentation_ready:
+                detail_list += (bullet + "%r : Work is not presentation ready" % work)
+            detail_list += (bullet + "%r : Unknown error." % identifier)
+        self.log.warn(
+            "%i identifiers could not be added to the feed. %s",
+            len(missing_ids), detail_list
+        )
+
 
 class StaticFeedCSVExportScript(StaticFeedScript):
 
@@ -815,6 +860,7 @@ class CustomListUploadScript(StaticFeedScript):
             joinedload(Work.license_pools),
             joinedload(Work.presentation_edition)
         )
+        self.log_missing_identifiers(identifiers, works_qu)
 
         youth_works_qu = None
         selections_for_youth = selections['youth']
@@ -1076,52 +1122,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             if (len(errors) > 0):
                 self.log.error("%i errors uploading to search index" % len(errors))
-            self.log.info("%i documents uploaded to search index %s on %s" % (success_count, parsed.search_index, parsed.search_url))
-
-    def log_missing_identifiers(self, requested_identifiers, works_qu):
-        """Logs details about requested identifiers that could not be added
-        to the static feeds for whatever reason.
-        """
-        included_ids_qu = works_qu.with_labels().statement.\
-            with_only_columns([Identifier.id])
-        included_ids = self._db.execute(included_ids_qu)
-        included_ids = [i[0] for i in included_ids.fetchall()]
-
-        requested_ids = [i.id for i in requested_identifiers]
-        missing_ids = set(requested_ids).difference(included_ids)
-        if not missing_ids:
-            return
-
-        detail_list = ""
-        bullet = "\n    - "
-        for id in missing_ids:
-            identifier = self._db.query(Identifier).filter(Identifier.id==id).one()
-            license_pool = identifier.licensed_through
-            if not license_pool:
-                detail_list += (bullet + "%r : No LicensePool found." % identifier)
-                continue
-
-            license_pool_message = bullet + "%r : LicensePool has been "
-            if license_pool.suppressed:
-                message = license_pool_message + "suppressed."
-                detail_list +=  (message % license_pool)
-                continue
-            if license_pool.superceded:
-                message = license_pool_message + "superceded."
-                detail_list +=  (message % license_pool)
-                continue
-
-            work = license_pool.work
-            if not work:
-                detail_list += (bullet + "%r : No Work found." % license_pool)
-                continue
-            if not work.presentation_ready:
-                detail_list += (bullet + "%r : Work is not presentation ready" % work)
-            detail_list += (bullet + "%r : Unknown error." % identifier)
-        self.log.warn(
-            "%i identifiers could not be added to the feed. %s",
-            len(missing_ids), detail_list
-        )
+            self.log.info(
+                "%i documents uploaded to search index %s on %s" % (
+                success_count, parsed.search_index, parsed.search_url))
 
     def make_lanes_from_csv(self, filename):
         """Parses a CSV file and creates the appropriate lane structure
