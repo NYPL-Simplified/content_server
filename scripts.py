@@ -21,7 +21,9 @@ from core.classifier import Classifier
 from core.scripts import Script
 from core.lane import (
     Facets,
+    Lane,
     Pagination,
+    make_lanes,
 )
 from core.metadata_layer import (
     LinkData,
@@ -59,7 +61,10 @@ from core.util import (
     slugify,
 )
 
-from config import Configuration
+from config import (
+    Configuration,
+    temp_config,
+)
 from coverage import GutenbergEPUBCoverageProvider
 from lanes import (
     StaticFeedBaseLane,
@@ -965,6 +970,28 @@ class FeedGenerationScript(StaticFeedScript):
         ]
     }
 
+    @classmethod
+    def arg_parser(cls):
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            '-u', '--upload', action='store_true',
+            help='Upload OPDS feed via S3.'
+        )
+        parser.add_argument(
+            '--prefix', default='',
+            help='A string to prepend the feed filenames (e.g. "demo/")'
+        )
+        parser.add_argument(
+            '--license', help='The url location of the licensing document for this feed'
+        )
+        parser.add_argument(
+            '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
+        )
+        parser.add_argument(
+            '--search-index', help='Upload to this elasticsearch index. elasticsearch-url must also be included'
+        )
+        return parser
+
     def feed_pages_by_filename(self, feed_id, full_lane, youth_lane=None,
                                prefix='', license_link=None, include_search=False,
                                enabled_facets=None, page_size=None):
@@ -1088,11 +1115,180 @@ class FeedGenerationScript(StaticFeedScript):
         return pages
 
 
+class CustomListFeedGenerationScript(FeedGenerationScript):
+
+    class IncompleteFeedConfigurationError(ValueError):
+        """The feed configuration file does not have all required values."""
+        pass
+
+    S3_CONFIG_KEYS = [
+        Configuration.S3_ACCESS_KEY,
+        Configuration.S3_SECRET_KEY,
+        Configuration.S3_STATIC_FEED_BUCKET
+    ]
+
+    SEARCH_CONFIG_KEYS = [
+        Configuration.URL,
+        Configuration.ELASTICSEARCH_INDEX_KEY
+    ]
+
+    @classmethod
+    def arg_parser(cls):
+        parser = super(CustomListFeedGenerationScript, cls).arg_parser()
+        parser.add_argument(
+            'list_identifier', help='The foreign_identifier of the CustomList'
+        )
+        parser.add_argument(
+            'feed_config', help='A JSON file to configure the generated static feeds'
+        )
+        parser.add_argument(
+            'domain', help='The domain where the feed will be placed.'
+        )
+        parser.add_argument(
+            '--list_source', default=DataSource.LIBRARY_STAFF,
+            help='The DataSource of the targeted CustomList '\
+            '(default: DataSource.LIBRARY_STAFF)'
+        )
+        return parser
+
+    @classmethod
+    def extract_feed_configuration(cls, parsed_args, uploader=None):
+        """Extracts the expected values from the feed_config JSON"""
+        config_file = os.path.abspath(parsed_args.feed_config)
+        feed_config = None
+        with open(config_file) as f:
+            feed_config = f.read()
+            feed_config = Configuration._load(feed_config)
+
+        if not feed_config:
+            raise ValueError("Feed configuration is required")
+
+        # Use command-line license link if it's included.
+        license_link = None
+        if parsed_args.license:
+            license_link = unicode(parsed_args.license)
+
+        # Initialize other values.
+        lanes_policy = None
+        uploader = None
+        external_search = None
+        with temp_config(feed_config) as config:
+            C = Configuration
+            # Extract the policy for this feed's lanes.
+            lanes_policy = C.policy(C.LANES_POLICY)
+            if not lanes_policy:
+                raise IncompleteFeedConfigurationError("No LANES_POLICY found")
+
+            enabled_facets = C.policy(C.FACET_POLICY)
+
+            if not license_link:
+                # Attempt to get the link this feed's license from the
+                # config file if it wasn't included on the command line.
+                license_link = C.link(C.LICENSE)
+
+            def confirm_configuration(configuration_dict, expected_keys, name):
+                """Ensures that the configuration is included for any fields
+                required for static feed generation.
+                """
+                missing = filter(lambda k: k not in configuration_dict, expected_keys)
+                if missing:
+                    missing = ["'%s'" % k for k in missing]
+                    missing = ", ".join(missing)
+
+                    raise IncompleteFeedConfigurationError(
+                        "Incomplete %s configuration: missing %s" % (
+                        name, missing))
+
+            uploader = uploader
+            if parsed_args.upload and not uploader:
+                s3_integration = C.integration(C.S3_INTEGRATION)
+                confirm_configuration(
+                    s3_integration, cls.S3_CONFIG_KEYS, C.S3_INTEGRATION
+                )
+                uploader = S3Uploader()
+
+            external_search = None
+            search_integration = C.integration(C.ELASTICSEARCH_INTEGRATION)
+            if search_integration:
+                confirm_configuration(
+                    search_integration, cls.SEARCH_CONFIG_KEYS,
+                    C.ELASTICSEARCH_INTEGRATION
+                )
+                external_search = ExternalSearchIndex()
+
+        return (lanes_policy, license_link, enabled_facets, uploader,
+                external_search)
+
+    def run(self, uploader=None, cmd_args=None):
+        parsed = self.arg_parser().parse_args(cmd_args)
+        prefix = unicode(parsed.prefix)
+        feed_id = unicode(parsed.domain)
+
+        # Remove configuration elements from the source config file.
+        feed_config = self.extract_feed_configuration(parsed, uploader)
+        (lanes_policy,
+         license_link,
+         enabled_facets,
+         uploader,
+         external_search) = feed_config
+
+        # Find the CustomList.
+        list_id = unicode(parsed.list_identifier)
+        list_source = DataSource.lookup(self._db, unicode(parsed.list_source))
+        custom_list = CustomList.find(self._db, list_source, list_id)
+        if not custom_list:
+            raise ValueError(
+                "No CustomList found with foreign_identifier %s" % list_id)
+
+        # Attempt to find a children's equivalent the CustomList, too.
+        youth_list_id = list_id + u'_children'
+        youth_custom_list = CustomList.find(self._db, list_source, youth_list_id)
+
+        # Make a lane for the full list.
+        list_details = dict(list_data_source=parsed.list_source, list_identifier=list_id)
+        lanelist = make_lanes(self._db, lanes_policy)
+        full_lane = self.create_base_lane(
+            u"All Books", lanelist=lanelist, **list_details)
+
+        # Create a youth lane if we need it.
+        youth_lane = None
+        if youth_custom_list:
+            list_details.update(list_identifier=youth_list_id)
+            youth_lane = self.create_base_lane(u"Children's Books", **list_details)
+
+        include_search = bool(external_search)
+        feeds = self.feed_pages_by_filename(
+            feed_id, full_lane, youth_lane,
+            prefix=prefix,
+            license_link=license_link,
+            include_search=include_search,
+            enabled_facets=enabled_facets
+        )
+
+        # TODO extract up- and downloading from StaticFeedGenerationScript
+        return feeds
+
+    def create_base_lane(self, name, lanelist=None, **kwargs):
+        lanes = lanelist
+        if lanes:
+            lanes = lanes.lanes
+        return Lane(
+            self._db, name,
+            display_name=name,
+            parent=None,
+            sublanes=lanes,
+            include_all=False,
+            languages=None,
+            searchable=True,
+            invisible=True,
+            **kwargs)
+
+
 class StaticFeedGenerationScript(FeedGenerationScript):
 
     @classmethod
     def arg_parser(cls):
-        parser = argparse.ArgumentParser()
+        parser = super(StaticFeedGenerationScript, cls).arg_parser()
         parser.add_argument(
             'source_csv', help='A CSV file to import URNs and Lane categories'
         )
@@ -1100,25 +1296,8 @@ class StaticFeedGenerationScript(FeedGenerationScript):
             'domain', help='The domain where the feed will be placed.'
         )
         parser.add_argument(
-            '-u', '--upload', action='store_true',
-            help='Upload OPDS feed via S3.'
-        )
-        parser.add_argument(
             '--page-size', type=int, default=Pagination.DEFAULT_SIZE,
             help='The number of entries in each page feed'
-        )
-        parser.add_argument(
-            '--prefix', default='',
-            help='A string to prepend the feed filenames (e.g. "demo/")'
-        )
-        parser.add_argument(
-            '--license', help='The url location of the licensing document for this feed'
-        )
-        parser.add_argument(
-            '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
-        )
-        parser.add_argument(
-            '--search-index', help='Upload to this elasticsearch index. elasticsearch-url must also be included'
         )
         parser.add_argument(
             '--urns', metavar='URN', nargs='*',
