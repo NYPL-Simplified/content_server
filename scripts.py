@@ -1152,6 +1152,33 @@ class FeedGenerationScript(StaticFeedScript):
 
         return representations
 
+    def load_index(self, search_client, full_query):
+        annotator = ContentServerAnnotator()
+        search_documents = []
+
+        # It's slow to do these individually, but this won't run very often.
+        for work in full_query:
+            if StaticFeedAnnotator.active_licensepool_for(work):
+                doc = work.to_search_document()
+                doc["_index"] = search_client.works_index
+                doc["_type"] = search_client.work_document_type
+                doc["opds_entry"] = etree.tostring(
+                    AcquisitionFeed.single_entry(self._db, work, annotator))
+                search_documents.append(doc)
+
+        success_count, errors = search_client.bulk(
+            search_documents,
+            raise_on_error=False,
+            raise_on_exception=False,
+        )
+
+        if (len(errors) > 0):
+            self.log.error("%i errors uploading to search index" % len(errors))
+        # TODO: Reference the URL in this log as well as the index.
+        self.log.info(
+            "%i documents uploaded to search index %s" % (
+            success_count, search_client.works_index))
+
 
 class CustomListFeedGenerationScript(FeedGenerationScript):
 
@@ -1208,8 +1235,7 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
 
         # Initialize other values.
         lanes_policy = None
-        uploader = None
-        external_search = None
+        search_client = None
         with temp_config(feed_config) as config:
             C = Configuration
             # Extract the policy for this feed's lanes.
@@ -1237,7 +1263,6 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
                         "Incomplete %s configuration: missing %s" % (
                         name, missing))
 
-            uploader = uploader
             if parsed_args.upload and not uploader:
                 s3_integration = C.integration(C.S3_INTEGRATION)
                 confirm_configuration(
@@ -1245,17 +1270,16 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
                 )
                 uploader = S3Uploader()
 
-            external_search = None
             search_integration = C.integration(C.ELASTICSEARCH_INTEGRATION)
             if search_integration:
                 confirm_configuration(
                     search_integration, cls.SEARCH_CONFIG_KEYS,
                     C.ELASTICSEARCH_INTEGRATION
                 )
-                external_search = ExternalSearchIndex()
+                search_client = ExternalSearchIndex()
 
         return (lanes_policy, license_link, enabled_facets, uploader,
-                external_search)
+                search_client)
 
     def run(self, uploader=None, cmd_args=None):
         parsed = self.arg_parser().parse_args(cmd_args)
@@ -1269,7 +1293,7 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
          license_link,
          enabled_facets,
          uploader,
-         external_search) = feed_config
+         search_client) = feed_config
 
         # Find the CustomList.
         list_id = unicode(parsed.list_identifier)
@@ -1295,7 +1319,7 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
             list_details.update(list_identifier=youth_list_id)
             youth_lane = self.create_base_lane(u"Children's Books", **list_details)
 
-        include_search = bool(external_search)
+        include_search = bool(search_client)
         feeds = self.feed_pages_by_filename(
             feed_id, full_lane, youth_lane,
             prefix=prefix,
@@ -1307,9 +1331,8 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
         uploader = test_uploader or uploader
         self.load(feeds, uploader=uploader)
 
-        # TODO: Extract Elasticsearch from StaticFeedGenerationScript
-        pass
-
+        if search_client:
+            self.load_index(search_client, full_lane.works())
 
     def create_base_lane(self, name, lanelist=None, **kwargs):
         lanes = lanelist
@@ -1377,7 +1400,8 @@ class StaticFeedGenerationScript(FeedGenerationScript):
 
             self.log_missing_identifiers(full_lane.identifiers, full_query)
         else:
-            full_lane, full_query, youth_lane, rejected_covers = self.make_lanes_from_csv(source_csv)
+            (full_lane, full_query,
+             youth_lane, rejected_covers) = self.make_lanes_from_csv(source_csv)
 
         if rejected_covers:
             Work.reject_covers(
@@ -1396,32 +1420,9 @@ class StaticFeedGenerationScript(FeedGenerationScript):
         uploader = uploader or S3Uploader()
         self.load(feeds, uploader=uploader)
 
-        if parsed.search_url and parsed.search_index:
+        if include_search:
             search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
-            annotator = ContentServerAnnotator()
-
-            search_documents = []
-
-            # It's slow to do these individually, but this won't run very often.
-            for work in full_query.all():
-                if StaticFeedAnnotator.active_licensepool_for(work):
-                    doc = work.to_search_document()
-                    doc["_index"] = search_client.works_index
-                    doc["_type"] = search_client.work_document_type
-                    doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
-                    search_documents.append(doc)
-
-            success_count, errors = search_client.bulk(
-                search_documents,
-                raise_on_error=False,
-                raise_on_exception=False,
-            )
-
-            if (len(errors) > 0):
-                self.log.error("%i errors uploading to search index" % len(errors))
-            self.log.info(
-                "%i documents uploaded to search index %s on %s" % (
-                success_count, parsed.search_index, parsed.search_url))
+            self.load_index(search_client, full_query)
 
     def make_lanes_from_csv(self, filename):
         """Parses a CSV file and creates the appropriate lane structure
