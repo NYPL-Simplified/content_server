@@ -1114,6 +1114,44 @@ class FeedGenerationScript(StaticFeedScript):
             pagination = pagination.next_page
         return pages
 
+    def load(self, feeds, uploader=None):
+        """Uploads feeds via S3 or downloads them locally."""
+        upload_files = list()
+        for base_filename, feed_pages in feeds:
+            # Each feed needs a unique filename, ending with the
+            # expected page number as a suffix.
+            for index, page in enumerate(feed_pages):
+                filename = base_filename
+                if index != 0:
+                    # The first page of a feed does not get a suffix.
+                    filename += '_%i' % (index+1)
+                upload_files.append((filename, page))
+
+        if uploader:
+            upload_files = [[f, c, uploader.feed_url(f)] for f, c in upload_files]
+            representations = self._create_representations(upload_files)
+            uploader.mirror_batch(representations)
+        else:
+            for filename, content in upload_files:
+                filename = os.path.abspath(filename + '.xml')
+                with open(filename, 'w') as f:
+                    f.write(content)
+                self.log.info("OPDS feed saved locally at %s", filename)
+
+    def _create_representations(self, upload_files):
+        representations = list()
+        for filename, content, mirror_url in upload_files:
+            feed_representation = get_one_or_create(
+                self._db, Representation,
+                mirror_url=mirror_url,
+                on_multiple='interchangeable'
+            )[0]
+            feed_representation.set_fetched_content(content, content_path=filename)
+            representations.append(feed_representation)
+        self._db.commit()
+
+        return representations
+
 
 class CustomListFeedGenerationScript(FeedGenerationScript):
 
@@ -1223,6 +1261,7 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
         parsed = self.arg_parser().parse_args(cmd_args)
         prefix = unicode(parsed.prefix)
         feed_id = unicode(parsed.domain)
+        test_uploader = uploader
 
         # Remove configuration elements from the source config file.
         feed_config = self.extract_feed_configuration(parsed, uploader)
@@ -1265,8 +1304,12 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
             enabled_facets=enabled_facets
         )
 
-        # TODO extract up- and downloading from StaticFeedGenerationScript
-        return feeds
+        uploader = test_uploader or uploader
+        self.load(feeds, uploader=uploader)
+
+        # TODO: Extract Elasticsearch from StaticFeedGenerationScript
+        pass
+
 
     def create_base_lane(self, name, lanelist=None, **kwargs):
         lanes = lanelist
@@ -1350,31 +1393,8 @@ class StaticFeedGenerationScript(FeedGenerationScript):
             page_size=parsed.page_size
         )
 
-        upload_files = list()
-        for base_filename, feed_pages in feeds:
-            for index, page in enumerate(feed_pages):
-                filename = base_filename
-                if index != 0:
-                    filename += '_%i' % (index+1)
-
-                content = page
-                if not isinstance(page, unicode):
-                    # This is a CachedFeed, so extract the feed string.
-                    content = page.content
-
-                upload_files.append((filename, content))
-
-        if parsed.upload:
-            uploader = uploader or S3Uploader()
-            upload_files = [[f, c, uploader.feed_url(f)] for f, c in upload_files]
-            representations = self.create_representations(upload_files)
-            uploader.mirror_batch(representations)
-        else:
-            for filename, content in upload_files:
-                filename = os.path.abspath(filename + '.xml')
-                with open(filename, 'w') as f:
-                    f.write(content)
-                self.log.info("OPDS feed saved locally at %s", filename)
+        uploader = uploader or S3Uploader()
+        self.load(feeds, uploader=uploader)
 
         if parsed.search_url and parsed.search_index:
             search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
@@ -1534,17 +1554,3 @@ class StaticFeedGenerationScript(FeedGenerationScript):
                 parent=parent,
                 include_all=False
             )
-
-    def create_representations(self, upload_files):
-        representations = list()
-        for filename, content, mirror_url in upload_files:
-            feed_representation = get_one_or_create(
-                self._db, Representation,
-                mirror_url=mirror_url,
-                on_multiple='interchangeable'
-            )[0]
-            feed_representation.set_fetched_content(content, content_path=filename)
-            representations.append(feed_representation)
-        self._db.commit()
-
-        return representations
