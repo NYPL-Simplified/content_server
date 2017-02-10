@@ -1,3 +1,4 @@
+import contextlib
 import feedparser
 import json
 import os
@@ -310,6 +311,15 @@ class TestCustomListUploadScript(DatabaseTest):
             eq_(1, len(full_list.entries_for_work(work)))
 
 
+@contextlib.contextmanager
+def lower_lane_sample_size():
+    setattr(Lane, 'MINIMUM_SAMPLE_SIZE', 1)
+    try:
+        yield
+    finally:
+        delattr(Lane, 'MINIMUM_SAMPLE_SIZE')
+
+
 class TestFeedGenerationScript(DatabaseTest):
 
     def setup(self):
@@ -491,6 +501,90 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
         results = self.script.extract_feed_configuration(feed_config, parser)
         eq_(5, len(results))
         eq_(dict(), enabled_facets)
+
+    def test_run(self):
+        romance = self._work(title="A", with_open_access_download=True, genre='Romance')
+        gothic = self._work(title="B", with_open_access_download=True, genre='Gothic Romance')
+        mystery = self._work(with_open_access_download=True, genre='Hard-Boiled Mystery')
+        paranormal = self._work(with_open_access_download=True, genre='Paranormal Mystery')
+        scifi = self._work(with_open_access_download=True, genre='Science Fiction')
+        short = self._work(with_open_access_download=True, genre='Short Stories')
+        history = self._work(with_open_access_download=True, genre='History', fiction=False)
+        ignored = self._work(with_open_access_download=True)
+
+        works = [romance, gothic, mystery, paranormal, scifi, short, history]
+        for work in works:
+            self.custom_list.add_entry(work.presentation_edition)
+
+        cmd_args = [
+            'a-list', 'tests/files/scripts/sample_config.json',
+            'http://ls.org', '-u'
+        ]
+
+        with lower_lane_sample_size():
+            self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+
+        # All of the expected files have been uploaded.
+        eq_(15, len(self.uploader.content))
+        expected_filenames = [
+            'index', 'fiction', 'fiction_romance',
+            'fiction_romance_author', 'fiction_mystery',
+            'fiction_mystery_hard-boiled-mystery',
+            'fiction_mystery_hard-boiled-mystery_author',
+            'fiction_mystery_paranormal-mystery',
+            'fiction_mystery_paranormal-mystery_author',
+            'fiction_science-fiction', 'fiction_science-fiction_author',
+            'fiction_general-fiction', 'fiction_general-fiction_author',
+            'nonfiction', 'nonfiction_author'
+        ]
+
+        feeds_by_filename = dict()
+        for rep in self.uploader.uploaded:
+            filename = rep.mirror_url.replace(self.uploader.static_feed_root(), '')
+            filename = filename.replace('.xml', '')
+            feeds_by_filename[filename] = feedparser.parse(rep.content)
+
+        # All of the filename that we thought would be uploaded have been.
+        eq_(sorted(expected_filenames), sorted(feeds_by_filename))
+
+        # And the books are where they should be.
+        def assert_match(entry, work):
+            entry.title = work.title
+            entry.author = work.author
+
+        romance_feed = feeds_by_filename['fiction_romance']
+        eq_(2, len(romance_feed.entries))
+        assert_match(romance_feed.entries[0], romance)
+        assert_match(romance_feed.entries[1], gothic)
+
+        hard_boiled_feed = feeds_by_filename['fiction_mystery_hard-boiled-mystery']
+        [entry] = hard_boiled_feed.entries
+        assert_match(entry, mystery)
+
+        paranormal_feed = feeds_by_filename['fiction_mystery_paranormal-mystery']
+        [entry] = paranormal_feed.entries
+        assert_match(entry, paranormal)
+
+        scifi_feed = feeds_by_filename['fiction_science-fiction']
+        [entry] = scifi_feed.entries
+        assert_match(entry, scifi)
+
+        general_feed = feeds_by_filename['fiction_general-fiction']
+        eq_(0, len(general_feed.entries))
+
+        nonfiction_feed = feeds_by_filename['nonfiction']
+        [entry] = nonfiction_feed.entries
+        assert_match(entry, history)
+
+        # While books in excluded genres or outside of the CustomList
+        # are nowhere to be seen.
+        all_entries = list()
+        [all_entries.extend(feed.entries) for feed in feeds_by_filename.values()]
+
+        for feed in feeds_by_filename.values():
+            for entry in feed.entries:
+                assert entry.title not in [short.title, ignored.title]
+                assert entry.author not in [short.author, ignored.author]
 
 
 class TestStaticFeedGenerationScript(DatabaseTest):

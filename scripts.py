@@ -1221,7 +1221,11 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
         config_file = os.path.abspath(filename)
         with open(config_file) as f:
             feed_config = f.read()
-            return Configuration._load(feed_config)
+            config = Configuration._load(feed_config)
+            # Set a fake data_directory, otherwise you can't build
+            # Representations. :upside_down_face:
+            config['data_directory'] = '/'
+            return config
 
     @classmethod
     def extract_feed_configuration(cls, feed_config, parsed_args, uploader=None):
@@ -1282,6 +1286,36 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
         return (lanes_policy, license_link, enabled_facets, uploader,
                 search_client)
 
+    @classmethod
+    def extract_overall_exclude_genres(cls, lanes_policy):
+        """Pull any overall exclude_genres from the lane policy.
+
+        For example, if "Short Stories" are excluded from the Fiction
+        lane and "Short Stories" doesn't have a lane all its own, then
+        "Short Stories" shouldn't be included in the full lane.
+        """
+        exclude_genres = list()
+        all_exclude_genres = [l.get('exclude_genres') for l in lanes_policy]
+        for genres in all_exclude_genres:
+            if not genres:
+                continue
+            if isinstance(genres, basestring):
+                genres = list(genres)
+            exclude_genres.extend(genres)
+        exclude_genres = set(exclude_genres)
+
+        genres_with_lanes = list()
+        all_genres = [l.get('genres') for l in lanes_policy]
+        for genres in all_genres:
+            if not genres:
+                continue
+            if isinstance(genres, basestring):
+                genres = list(genres)
+            genres_with_lanes.extend(genres)
+        genres_with_lanes = set(genres_with_lanes)
+
+        exclude_genres = list(exclude_genres.difference(genres_with_lanes))
+
     def run(self, uploader=None, cmd_args=None):
         parsed = self.arg_parser().parse_args(cmd_args)
         prefix = unicode(parsed.prefix)
@@ -1289,7 +1323,7 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
 
         # Remove configuration elements from the source config file.
         feed_config = self.get_json_config(parsed.feed_config)
-        config_details = self.extract_feed_configuration(parsed, feed_config, uploader)
+        config_details = self.extract_feed_configuration(feed_config, parsed, uploader)
         (lanes_policy,
          license_link,
          enabled_facets,
@@ -1309,16 +1343,20 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
         youth_custom_list = CustomList.find(self._db, list_source, youth_list_id)
 
         # Make a lane for the full list.
-        list_details = dict(list_data_source=parsed.list_source, list_identifier=list_id)
+        exclude_genres = self.extract_overall_exclude_genres(lanes_policy)
+        lane_details = dict(
+            list_data_source=parsed.list_source, list_identifier=list_id,
+            exclude_genres=exclude_genres
+        )
         lanelist = make_lanes(self._db, lanes_policy)
         full_lane = self.create_base_lane(
-            u"All Books", lanelist=lanelist, **list_details)
+            u"All Books", lanelist=lanelist, **lane_details)
 
         # Create a youth lane if we need it.
         youth_lane = None
         if youth_custom_list:
-            list_details.update(list_identifier=youth_list_id)
-            youth_lane = self.create_base_lane(u"Children's Books", **list_details)
+            lane_details.update(list_identifier=youth_list_id)
+            youth_lane = self.create_base_lane(u"Children's Books", **lane_details)
 
         include_search = bool(search_client)
         feeds = self.feed_pages_by_filename(

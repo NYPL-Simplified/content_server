@@ -9,14 +9,34 @@
         "full_name" : "Fiction",
         "audiences" : "Adult",
         "fiction" : true,
-        "excludes_genres" : ["Short Stories"],
+        "exclude_genres" : ["Short Stories"],
+        "subgenre_behavior" : "collapse",
         "sublanes" : [
-          { "full_name" : "Horror",
-            "genres" : "Horror",
+          { "full_name" : "Mystery",
+            "genres" : "Mystery",
             "sublanes" : [
-              ""]},
-          { "full_name" : "Science Fiction" },
-          { "full_name" : "General Fiction" }
+              {
+                "full_name" : "Hard-Boiled Mystery",
+                "genres" : "Hard-Boiled Mystery"
+              },
+              {
+                "full_name" : "Paranormal Mystery",
+                "genres" : "Paranormal Mystery"
+               }
+            ]
+          },
+          {
+            "full_name" : "Science Fiction",
+            "genres" : "Science Fiction"
+           },
+          {
+            "full_name" : "Romance",
+            "genres" : "Romance"
+          },
+          { "full_name" : "General Fiction",
+            "fiction" : true,
+            "exclude_genres" : [ "Mystery", "Science Fiction", "Romance", "Short Stories" ]
+          }
         ]
       },
       {
