@@ -1217,14 +1217,15 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
         return parser
 
     @classmethod
-    def extract_feed_configuration(cls, parsed_args, uploader=None):
-        """Extracts the expected values from the feed_config JSON"""
-        config_file = os.path.abspath(parsed_args.feed_config)
-        feed_config = None
+    def get_json_config(cls, filename):
+        config_file = os.path.abspath(filename)
         with open(config_file) as f:
             feed_config = f.read()
-            feed_config = Configuration._load(feed_config)
+            return Configuration._load(feed_config)
 
+    @classmethod
+    def extract_feed_configuration(cls, feed_config, parsed_args, uploader=None):
+        """Extracts the expected values from the feed_config JSON"""
         if not feed_config:
             raise ValueError("Feed configuration is required")
 
@@ -1241,7 +1242,7 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
             # Extract the policy for this feed's lanes.
             lanes_policy = C.policy(C.LANES_POLICY)
             if not lanes_policy:
-                raise IncompleteFeedConfigurationError("No LANES_POLICY found")
+                raise cls.IncompleteFeedConfigurationError("No LANES_POLICY found")
 
             enabled_facets = C.policy(C.FACET_POLICY)
 
@@ -1259,7 +1260,7 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
                     missing = ["'%s'" % k for k in missing]
                     missing = ", ".join(missing)
 
-                    raise IncompleteFeedConfigurationError(
+                    raise cls.IncompleteFeedConfigurationError(
                         "Incomplete %s configuration: missing %s" % (
                         name, missing))
 
@@ -1285,15 +1286,15 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
         parsed = self.arg_parser().parse_args(cmd_args)
         prefix = unicode(parsed.prefix)
         feed_id = unicode(parsed.domain)
-        test_uploader = uploader
 
         # Remove configuration elements from the source config file.
-        feed_config = self.extract_feed_configuration(parsed, uploader)
+        feed_config = self.get_json_config(parsed.feed_config)
+        config_details = self.extract_feed_configuration(parsed, feed_config, uploader)
         (lanes_policy,
          license_link,
          enabled_facets,
          uploader,
-         search_client) = feed_config
+         search_client) = config_details
 
         # Find the CustomList.
         list_id = unicode(parsed.list_identifier)
@@ -1328,8 +1329,11 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
             enabled_facets=enabled_facets
         )
 
-        uploader = test_uploader or uploader
-        self.load(feeds, uploader=uploader)
+        with temp_config(feed_config) as config:
+            # The feed configuration is required as an upload context
+            # to ensure the temporary static_feed_bucket will be used
+            # (as opposed to a locally-defined bucket).
+            self.load(feeds, uploader=uploader)
 
         if search_client:
             self.load_index(search_client, full_lane.works())

@@ -1,4 +1,5 @@
 import feedparser
+import json
 import os
 import tempfile
 from nose.tools import (
@@ -38,6 +39,7 @@ from ..opds import StaticFeedAnnotator
 from ..s3 import DummyS3Uploader
 from ..scripts import (
     CustomListUploadScript,
+    CustomListFeedGenerationScript,
     FeedGenerationScript,
     StaticFeedCSVExportScript,
     StaticFeedGenerationScript,
@@ -392,6 +394,103 @@ class TestFeedGenerationScript(DatabaseTest):
         eq_(previous_link.href, first)
         eq_(first_link.href, first)
         eq_([], links_by_rel(parsed, 'next'))
+
+
+class TestCustomListFeedGenerationScript(DatabaseTest):
+
+    def setup(self):
+        super(TestCustomListFeedGenerationScript, self).setup()
+
+        self.custom_list, self.entries = self._customlist(
+            foreign_identifier=u'a-list', name=u'A List', num_entries=0,
+            data_source_name=DataSource.LIBRARY_STAFF)
+        self.uploader = DummyS3Uploader()
+        self.script = CustomListFeedGenerationScript(_db=self._db)
+
+    def test_extract_feed_configuration(self):
+
+        # If the feed configuration file is empty, an error is raised.
+        test_file = 'tests/files/scripts/empty.json'
+        cmd_args = ['a-list', test_file, 'https://ls.org']
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        assert_raises(
+            ValueError, self.script.extract_feed_configuration,
+            feed_config, parser
+        )
+
+        # If the parser has a license_link, it isn't overwritten.
+        test_file = 'tests/files/scripts/sample_config.json'
+        cmd_args = [
+            'a-list', test_file, 'https://ls.org',
+            '--license', 'http://samplelicense.net'
+        ]
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        returned_license_link = self.script.extract_feed_configuration(
+            feed_config, parser
+        )[1]
+        eq_('http://samplelicense.net', returned_license_link)
+
+        # Neither is an included uploader.
+        test_file = 'tests/files/scripts/sample_config.json'
+        cmd_args = ['a-list', test_file, 'https://ls.org']
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        uploader = DummyS3Uploader()
+
+        returned_uploader = self.script.extract_feed_configuration(
+            feed_config, parser, uploader=uploader)[3]
+        eq_(uploader, returned_uploader)
+
+        def assert_incomplete_error_raised(config_filename, args=None):
+            test_file = 'tests/files/scripts/%s.json' % config_filename
+            cmd_args = ['a-list', test_file, 'https://ls.org']
+            if args:
+                cmd_args += args
+            parser = self.script.arg_parser().parse_args(cmd_args)
+            feed_config = self.script.get_json_config(test_file)
+            assert_raises(
+                self.script.IncompleteFeedConfigurationError,
+                self.script.extract_feed_configuration, feed_config, parser
+            )
+
+        # An error is raised if there's no lanes policy.
+        assert_incomplete_error_raised('no_lane_policy')
+
+        # Or if the S3 integration is included but incomplete.
+        assert_incomplete_error_raised('no_s3_secret', ['-u'])
+        assert_incomplete_error_raised('no_static_feed_bucket', ['-u'])
+
+        # Or if the Elasticsearch integration is included but incomplete.
+        assert_incomplete_error_raised('no_elasticsearch_url')
+
+        # When the configuration is complete, we get back everything we expect.
+        test_file = 'tests/files/scripts/sample_config.json'
+        cmd_args = ['a-list', test_file, 'https://ls.org', '-u']
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        results = self.script.extract_feed_configuration(feed_config, parser)
+
+        eq_(5, len(results))
+        (lanes_policy, license_link, enabled_facets, uploader, search_client) = results
+
+        eq_(feed_config['policies']['lanes'], lanes_policy)
+        eq_('https://ls.org/license.html', license_link)
+        eq_(feed_config['policies']['facets'], enabled_facets)
+        eq_('abc', uploader.pool.auth.access_key)
+        # Can't create an Elasticsearch client without referring to a
+        # running Elasticsearch instance, which is frustrating here.
+        eq_(None, search_client)
+
+        # Enabled facets aren't required.
+        test_file = 'tests/files/scripts/no_enabled_facets.json'
+        cmd_args = ['a-list', test_file, 'https://ls.org']
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        results = self.script.extract_feed_configuration(feed_config, parser)
+        eq_(5, len(results))
+        eq_(dict(), enabled_facets)
 
 
 class TestStaticFeedGenerationScript(DatabaseTest):
