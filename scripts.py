@@ -329,6 +329,7 @@ class StaticFeedScript(Script):
                 continue
             if not work.presentation_ready:
                 detail_list += (bullet + "%r : Work is not presentation ready" % work)
+                continue
             detail_list += (bullet + "%r : Unknown error." % identifier)
         self.log.warn(
             "%i identifiers could not be added to the feed. %s",
