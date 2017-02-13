@@ -21,7 +21,9 @@ from core.classifier import Classifier
 from core.scripts import Script
 from core.lane import (
     Facets,
+    Lane,
     Pagination,
+    make_lanes,
 )
 from core.metadata_layer import (
     LinkData,
@@ -59,7 +61,10 @@ from core.util import (
     slugify,
 )
 
-from config import Configuration
+from config import (
+    Configuration,
+    temp_config,
+)
 from coverage import GutenbergEPUBCoverageProvider
 from lanes import (
     StaticFeedBaseLane,
@@ -285,6 +290,52 @@ class StaticFeedScript(Script):
             csv_reader.fieldnames
         )
 
+    def log_missing_identifiers(self, requested_identifiers, works_qu):
+        """Logs details about requested identifiers that could not be added
+        to the static feeds for whatever reason.
+        """
+        included_ids_qu = works_qu.with_labels().statement.\
+            with_only_columns([Identifier.id])
+        included_ids = self._db.execute(included_ids_qu)
+        included_ids = [i[0] for i in included_ids.fetchall()]
+
+        requested_ids = [i.id for i in requested_identifiers]
+        missing_ids = set(requested_ids).difference(included_ids)
+        if not missing_ids:
+            return
+
+        detail_list = ""
+        bullet = "\n    - "
+        for id in missing_ids:
+            identifier = self._db.query(Identifier).filter(Identifier.id==id).one()
+            license_pool = identifier.licensed_through
+            if not license_pool:
+                detail_list += (bullet + "%r : No LicensePool found." % identifier)
+                continue
+
+            license_pool_message = bullet + "%r : LicensePool has been "
+            if license_pool.suppressed:
+                message = license_pool_message + "suppressed."
+                detail_list +=  (message % license_pool)
+                continue
+            if license_pool.superceded:
+                message = license_pool_message + "superceded."
+                detail_list +=  (message % license_pool)
+                continue
+
+            work = license_pool.work
+            if not work:
+                detail_list += (bullet + "%r : No Work found." % license_pool)
+                continue
+            if not work.presentation_ready:
+                detail_list += (bullet + "%r : Work is not presentation ready" % work)
+                continue
+            detail_list += (bullet + "%r : Unknown error." % identifier)
+        self.log.warn(
+            "%i identifiers could not be added to the feed. %s",
+            len(missing_ids), detail_list
+        )
+
 
 class StaticFeedCSVExportScript(StaticFeedScript):
 
@@ -294,7 +345,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
     If requested categories are passed in via an existing CSV, this
     script will add headers to represent those categories, in a proper
-    format for StaticFeedGenerationScript.
+    format for CSVFeedGenerationScript.
     """
 
     class CategoryNode(object):
@@ -734,6 +785,7 @@ class CustomListUploadScript(StaticFeedScript):
                 self._db, CustomList,
                 data_source=self.source,
                 foreign_identifier=list_id,
+                create_method_kwargs=create_method_kwargs
             )
 
         works, youth_works, featured_identifiers = self.works_from_source(source_csv)
@@ -814,6 +866,7 @@ class CustomListUploadScript(StaticFeedScript):
             joinedload(Work.license_pools),
             joinedload(Work.presentation_edition)
         )
+        self.log_missing_identifiers(identifiers, works_qu)
 
         youth_works_qu = None
         selections_for_youth = selections['youth']
@@ -841,7 +894,6 @@ class CustomListUploadScript(StaticFeedScript):
                 input_editions, featured_identifiers
             )
             [custom_list.add_entry(e, featured=f) for e, f in input_editions]
-            return
 
         if save_option == 'remove':
             [custom_list.remove_entry(e) for e in input_editions]
@@ -860,6 +912,9 @@ class CustomListUploadScript(StaticFeedScript):
                 input_editions, featured_identifiers
             )
             [custom_list.add_entry(e, featured=f) for e, f in input_editions]
+
+        if save_option in self.EDIT_OPTIONS:
+            custom_list.updated = datetime.utcnow()
 
     def editions_with_featured_status(self, editions, featured_identifiers):
         """Evaluates which editions from a list of editions have been
@@ -920,21 +975,12 @@ class StaticFeedGenerationScript(StaticFeedScript):
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            'source_csv', help='A CSV file to import URNs and Lane categories'
-        )
-        parser.add_argument(
-            '-d', '--domain', help='The domain where the feed will be placed.'
-        )
-        parser.add_argument(
             '-u', '--upload', action='store_true',
             help='Upload OPDS feed via S3.'
         )
         parser.add_argument(
-            '--page-size', type=int, default=Pagination.DEFAULT_SIZE,
-            help='The number of entries in each page feed'
-        )
-        parser.add_argument(
-            '--prefix', help='A string to prepend the feed filenames (e.g. "demo/")'
+            '--prefix', default='',
+            help='A string to prepend the feed filenames (e.g. "demo/")'
         )
         parser.add_argument(
             '--license', help='The url location of the licensing document for this feed'
@@ -945,20 +991,439 @@ class StaticFeedGenerationScript(StaticFeedScript):
         parser.add_argument(
             '--search-index', help='Upload to this elasticsearch index. elasticsearch-url must also be included'
         )
+        return parser
+
+    def feed_pages_by_filename(self, feed_id, full_lane, youth_lane=None,
+                               prefix='', license_link=None, include_search=False,
+                               enabled_facets=None, page_size=None):
+        """Creates and returns static feed content.
+
+        :return: A list of tuples (prospective filename, AcquistionFeed
+        representing the static feed)
+        """
+        feeds = list()
+        annotator = None
+        if youth_lane:
+            # When a youth lane exists, we create a navigation feed to
+            # assist with COPPA restrictions.
+            nav_feed = StaticCOPPANavigationFeed(
+                StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
+                youth_lane, full_lane,
+                prefix=prefix,
+                license_link=license_link,
+                include_search=include_search,
+            )
+            feeds.append((
+                prefix + StaticFeedCOPPAAnnotator.HOME_FILENAME,
+                [unicode(nav_feed)]))
+
+            annotator = StaticFeedCOPPAAnnotator(
+                feed_id, youth_lane,
+                prefix=prefix,
+                license_link=license_link,
+                include_search=include_search,
+            )
+
+            feeds += list(self.create_feeds(
+                [youth_lane], annotator,
+                enabled_facets=enabled_facets,
+                page_size=page_size
+            ))
+        else:
+            # Without a youth feed, we don't need to create a navigation feed.
+            annotator = StaticFeedAnnotator(
+                feed_id, full_lane,
+                prefix=prefix,
+                license_link=license_link,
+                include_search=include_search,
+            )
+
+        feeds += list(self.create_feeds(
+            [full_lane], annotator,
+            enabled_facets=enabled_facets,
+            page_size=page_size
+        ))
+        return feeds
+
+    def create_feeds(self, lanes, annotator, enabled_facets=None, page_size=None):
+        """Creates feeds for facets that may be required
+
+        :return: A dictionary of filenames pointing to a list of CachedFeed
+        objects representing pages
+        """
+        for lane in lanes:
+            annotator.reset(lane)
+            filename = annotator.lane_filename()
+            url = annotator.lane_url(lane)
+            if lane.sublanes:
+                # This is an intermediate lane, without its own works.
+                # It needs a groups feed.
+                self.log.info("Creating groups feed for lane: %s", lane.name)
+                feed = AcquisitionFeed.groups(
+                    self._db, lane.name, url, lane, annotator,
+                    cache_type=AcquisitionFeed.NO_CACHE,
+                    use_materialized_works=False
+                )
+                yield filename, [feed]
+
+                # Return filenames and feeds for any sublanes as well.
+                for filename, feeds in self.create_feeds(
+                    lane.sublanes, annotator
+                ):
+                    yield filename, feeds
+            else:
+                enabled_facets = enabled_facets or self.DEFAULT_ENABLED_FACETS
+                static_facets = Facets(
+                    collection=Facets.COLLECTION_FULL,
+                    availability=Facets.AVAILABLE_OPEN_ACCESS,
+                    order=Facets.ORDER_TITLE,
+                    enabled_facets=enabled_facets
+                )
+
+                self.log.info("Creating feed pages for lane: %s", lane.name)
+                for facet_group in list(static_facets.facet_groups):
+                    ordered_by, facet_obj = facet_group[1:3]
+                    pagination = Pagination.default()
+                    if page_size:
+                        pagination.size = page_size
+
+                    feed_pages = self.create_feed_pages(
+                        lane, pagination, url, annotator, facet_obj
+                    )
+
+                    if ordered_by != annotator.DEFAULT_ORDER:
+                        filename += ('_' + ordered_by)
+                    yield filename, feed_pages
+
+    def create_feed_pages(self, lane, pagination, lane_url, annotator, facet):
+        """Yields each page of the feed for a particular lane."""
+        pages = list()
+        previous_page = pagination.previous_page
+        while (not previous_page) or previous_page.has_next_page:
+            page = AcquisitionFeed.page(
+                self._db, lane.name, lane_url, lane,
+                annotator=annotator,
+                facets=facet,
+                pagination=pagination,
+                cache_type=AcquisitionFeed.NO_CACHE,
+                use_materialized_works=False
+            )
+            pages.append(page)
+
+            # Reset values to determine if next page should be created.
+            previous_page = pagination
+            pagination = pagination.next_page
+        return pages
+
+    def load(self, feeds, uploader=None):
+        """Uploads feeds via S3 or downloads them locally."""
+        upload_files = list()
+        for base_filename, feed_pages in feeds:
+            # Each feed needs a unique filename, ending with the
+            # expected page number as a suffix.
+            for index, page in enumerate(feed_pages):
+                filename = base_filename
+                if index != 0:
+                    # The first page of a feed does not get a suffix.
+                    filename += '_%i' % (index+1)
+                upload_files.append((filename, page))
+
+        if uploader:
+            upload_files = [[f, c, uploader.feed_url(f)] for f, c in upload_files]
+            representations = self._create_representations(upload_files)
+            uploader.mirror_batch(representations)
+        else:
+            for filename, content in upload_files:
+                filename = os.path.abspath(filename + '.xml')
+                with open(filename, 'w') as f:
+                    f.write(content)
+                self.log.info("OPDS feed saved locally at %s", filename)
+
+    def _create_representations(self, upload_files):
+        representations = list()
+        for filename, content, mirror_url in upload_files:
+            feed_representation = get_one_or_create(
+                self._db, Representation,
+                mirror_url=mirror_url,
+                on_multiple='interchangeable'
+            )[0]
+            feed_representation.set_fetched_content(content, content_path=filename)
+            representations.append(feed_representation)
+        self._db.commit()
+
+        return representations
+
+    def load_index(self, search_client, full_query):
+        annotator = ContentServerAnnotator()
+        search_documents = []
+
+        # It's slow to do these individually, but this won't run very often.
+        for work in full_query:
+            if StaticFeedAnnotator.active_licensepool_for(work):
+                doc = work.to_search_document()
+                doc["_index"] = search_client.works_index
+                doc["_type"] = search_client.work_document_type
+                doc["opds_entry"] = etree.tostring(
+                    AcquisitionFeed.single_entry(self._db, work, annotator))
+                search_documents.append(doc)
+
+        success_count, errors = search_client.bulk(
+            search_documents,
+            raise_on_error=False,
+            raise_on_exception=False,
+        )
+
+        if (len(errors) > 0):
+            self.log.error("%i errors uploading to search index" % len(errors))
+        # TODO: Reference the URL in this log as well as the index.
+        self.log.info(
+            "%i documents uploaded to search index %s" % (
+            success_count, search_client.works_index))
+
+
+class CustomListFeedGenerationScript(StaticFeedGenerationScript):
+
+    class IncompleteFeedConfigurationError(ValueError):
+        """The feed configuration file does not have all required values."""
+        pass
+
+    S3_CONFIG_KEYS = [
+        Configuration.S3_ACCESS_KEY,
+        Configuration.S3_SECRET_KEY,
+        Configuration.S3_STATIC_FEED_BUCKET
+    ]
+
+    SEARCH_CONFIG_KEYS = [
+        Configuration.URL,
+        Configuration.ELASTICSEARCH_INDEX_KEY
+    ]
+
+    @classmethod
+    def arg_parser(cls):
+        parser = super(CustomListFeedGenerationScript, cls).arg_parser()
+        parser.add_argument(
+            'list_identifier', help='The foreign_identifier of the CustomList'
+        )
+        parser.add_argument(
+            'feed_config', help='A JSON file to configure the generated static feeds'
+        )
+        parser.add_argument(
+            'domain', help='The domain where the feed will be placed.'
+        )
+        parser.add_argument(
+            '--list_source', default=DataSource.LIBRARY_STAFF,
+            help='The DataSource of the targeted CustomList '\
+            '(default: DataSource.LIBRARY_STAFF)'
+        )
+        return parser
+
+    @classmethod
+    def get_json_config(cls, filename):
+        config_file = os.path.abspath(filename)
+        with open(config_file) as f:
+            feed_config = f.read()
+            config = Configuration._load(feed_config)
+            # Set a fake data_directory, otherwise you can't build
+            # Representations. :upside_down_face:
+            config['data_directory'] = '/'
+            return config
+
+    @classmethod
+    def extract_feed_configuration(cls, feed_config, parsed_args, uploader=None):
+        """Extracts the expected values from the feed_config JSON"""
+        if not feed_config:
+            raise ValueError("Feed configuration is required")
+
+        # Use command-line license link if it's included.
+        license_link = None
+        if parsed_args.license:
+            license_link = unicode(parsed_args.license)
+
+        # Initialize other values.
+        lanes_policy = None
+        search_client = None
+        with temp_config(feed_config) as config:
+            C = Configuration
+            # Extract the policy for this feed's lanes.
+            lanes_policy = C.policy(C.LANES_POLICY)
+            if not lanes_policy:
+                raise cls.IncompleteFeedConfigurationError("No LANES_POLICY found")
+
+            enabled_facets = C.policy(C.FACET_POLICY)
+
+            if not license_link:
+                # Attempt to get the link this feed's license from the
+                # config file if it wasn't included on the command line.
+                license_link = C.link(C.LICENSE)
+
+            def confirm_configuration(configuration_dict, expected_keys, name):
+                """Ensures that the configuration is included for any fields
+                required for static feed generation.
+                """
+                missing = filter(lambda k: k not in configuration_dict, expected_keys)
+                if missing:
+                    missing = ["'%s'" % k for k in missing]
+                    missing = ", ".join(missing)
+
+                    raise cls.IncompleteFeedConfigurationError(
+                        "Incomplete %s configuration: missing %s" % (
+                        name, missing))
+
+            if parsed_args.upload and not uploader:
+                s3_integration = C.integration(C.S3_INTEGRATION)
+                confirm_configuration(
+                    s3_integration, cls.S3_CONFIG_KEYS, C.S3_INTEGRATION
+                )
+                uploader = S3Uploader()
+
+            search_integration = C.integration(C.ELASTICSEARCH_INTEGRATION)
+            if search_integration:
+                confirm_configuration(
+                    search_integration, cls.SEARCH_CONFIG_KEYS,
+                    C.ELASTICSEARCH_INTEGRATION
+                )
+                search_client = ExternalSearchIndex()
+
+        return (lanes_policy, license_link, enabled_facets, uploader,
+                search_client)
+
+    @classmethod
+    def extract_overall_exclude_genres(cls, lanes_policy):
+        """Pull any overall exclude_genres from the lane policy.
+
+        For example, if "Short Stories" are excluded from the Fiction
+        lane and "Short Stories" doesn't have a lane all its own, then
+        "Short Stories" shouldn't be included in the full lane.
+        """
+        exclude_genres = list()
+        all_exclude_genres = [l.get('exclude_genres') for l in lanes_policy]
+        for genres in all_exclude_genres:
+            if not genres:
+                continue
+            if isinstance(genres, basestring):
+                genres = list(genres)
+            exclude_genres.extend(genres)
+        exclude_genres = set(exclude_genres)
+
+        genres_with_lanes = list()
+        all_genres = [l.get('genres') for l in lanes_policy]
+        for genres in all_genres:
+            if not genres:
+                continue
+            if isinstance(genres, basestring):
+                genres = list(genres)
+            genres_with_lanes.extend(genres)
+        genres_with_lanes = set(genres_with_lanes)
+
+        exclude_genres = list(exclude_genres.difference(genres_with_lanes))
+
+    def run(self, uploader=None, cmd_args=None):
+        parsed = self.arg_parser().parse_args(cmd_args)
+        prefix = unicode(parsed.prefix)
+        feed_id = unicode(parsed.domain)
+
+        # Remove configuration elements from the source config file.
+        feed_config = self.get_json_config(parsed.feed_config)
+        config_details = self.extract_feed_configuration(feed_config, parsed, uploader)
+        (lanes_policy,
+         license_link,
+         enabled_facets,
+         uploader,
+         search_client) = config_details
+
+        # Find the CustomList.
+        list_id = unicode(parsed.list_identifier)
+        list_source = DataSource.lookup(self._db, unicode(parsed.list_source))
+        custom_list = CustomList.find(self._db, list_source, list_id)
+        if not custom_list:
+            raise ValueError(
+                "No CustomList found with foreign_identifier %s" % list_id)
+
+        # Attempt to find a children's equivalent the CustomList, too.
+        youth_list_id = list_id + u'_children'
+        youth_custom_list = CustomList.find(self._db, list_source, youth_list_id)
+
+        # Make a lane for the full list.
+        exclude_genres = self.extract_overall_exclude_genres(lanes_policy)
+        lane_details = dict(
+            list_data_source=parsed.list_source, list_identifier=list_id,
+            exclude_genres=exclude_genres
+        )
+        lanelist = make_lanes(self._db, lanes_policy)
+        full_lane = self.create_base_lane(
+            u"All Books", lanelist=lanelist, **lane_details)
+
+        # Create a youth lane if we need it.
+        youth_lane = None
+        if youth_custom_list:
+            lane_details.update(list_identifier=youth_list_id)
+            youth_lane = self.create_base_lane(u"Children's Books", **lane_details)
+
+        include_search = bool(search_client)
+        feeds = self.feed_pages_by_filename(
+            feed_id, full_lane, youth_lane,
+            prefix=prefix,
+            license_link=license_link,
+            include_search=include_search,
+            enabled_facets=enabled_facets
+        )
+
+        with temp_config(feed_config) as config:
+            # The feed configuration is required as an upload context
+            # to ensure the temporary static_feed_bucket will be used
+            # (as opposed to a locally-defined bucket).
+            self.load(feeds, uploader=uploader)
+
+        if search_client:
+            self.load_index(search_client, full_lane.works())
+
+    def create_base_lane(self, name, lanelist=None, **kwargs):
+        lanes = lanelist
+        if lanes:
+            lanes = lanes.lanes
+        return Lane(
+            self._db, name,
+            display_name=name,
+            parent=None,
+            sublanes=lanes,
+            include_all=False,
+            languages=None,
+            searchable=True,
+            invisible=True,
+            **kwargs)
+
+
+class CSVFeedGenerationScript(StaticFeedGenerationScript):
+
+    @classmethod
+    def arg_parser(cls):
+        parser = super(CSVFeedGenerationScript, cls).arg_parser()
+        parser.add_argument(
+            'source_csv', help='A CSV file to import URNs and Lane categories'
+        )
+        parser.add_argument(
+            'domain', help='The domain where the feed will be placed.'
+        )
+        parser.add_argument(
+            '--page-size', type=int, default=Pagination.DEFAULT_SIZE,
+            help='The number of entries in each page feed'
+        )
         parser.add_argument(
             '--urns', metavar='URN', nargs='*',
             help='Specific identifier urns to process, esp. for testing'
         )
         return parser
 
-
     def run(self, uploader=None, cmd_args=None, search_index_client=None):
         parsed = self.arg_parser().parse_args(cmd_args)
         source_csv = os.path.abspath(parsed.source_csv)
         feed_id = unicode(parsed.domain)
-        page_size = parsed.page_size
+        prefix = unicode(parsed.prefix)
 
-        if not (feed_id and (os.path.isfile(source_csv) or parsed.urns)):
+        # Determine if the resulting feeds should have a search link.
+        include_search = bool(parsed.search_url and parsed.search_index)
+
+        if not (os.path.isfile(source_csv) or parsed.urns):
             # We can't build an OPDS feed or identify the required
             # Works without this information.
             raise ValueError('Please include all required arguments.')
@@ -978,7 +1443,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
 
             self.log_missing_identifiers(full_lane.identifiers, full_query)
         else:
-            full_lane, full_query, youth_lane, rejected_covers = self.make_lanes_from_csv(source_csv)
+            (full_lane, full_query,
+             youth_lane, rejected_covers) = self.make_lanes_from_csv(source_csv)
 
         if rejected_covers:
             Work.reject_covers(
@@ -986,134 +1452,20 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 search_index_client=search_index_client
             )
 
-        # Determine if the feed should have a search link.
-        search = bool(parsed.search_url and parsed.search_index)
-
-        feeds = list()
-        if youth_lane:
-            # When a youth lane exists, we create a navigation feed to
-            # assist with COPPA restrictions.
-            nav_feed = StaticCOPPANavigationFeed(
-                StaticFeedCOPPAAnnotator.TOP_LEVEL_LANE_NAME, feed_id,
-                youth_lane, full_lane,
-                prefix=parsed.prefix,
-                license_link=parsed.license
-            )
-            prefix = parsed.prefix or ''
-            feeds.append((
-                prefix + StaticFeedCOPPAAnnotator.HOME_FILENAME,
-                [unicode(nav_feed)]
-            ))
-
-            annotator = StaticFeedCOPPAAnnotator(
-                feed_id, youth_lane,
-                prefix=parsed.prefix,
-                include_search=search,
-                license_link=parsed.license
-            )
-
-            youth_feeds = list(self.create_feeds([youth_lane], page_size, annotator))
-            feeds += youth_feeds
-        else:
-            # Without a youth feed, we don't need to create a navigation feed.
-            annotator = StaticFeedAnnotator(
-                feed_id, full_lane,
-                prefix=parsed.prefix,
-                include_search=search,
-                license_link=parsed.license
-            )
-
-        feeds += list(self.create_feeds([full_lane], page_size, annotator))
-
-        upload_files = list()
-        for base_filename, feed_pages in feeds:
-            for index, page in enumerate(feed_pages):
-                filename = base_filename
-                if index != 0:
-                    filename += '_%i' % (index+1)
-
-                content = page
-                if not isinstance(page, unicode):
-                    # This is a CachedFeed, so extract the feed string.
-                    content = page.content
-
-                upload_files.append((filename, content))
-
-        if parsed.upload:
-            uploader = uploader or S3Uploader()
-            upload_files = [[f, c, uploader.feed_url(f)] for f, c in upload_files]
-            representations = self.create_representations(upload_files)
-            uploader.mirror_batch(representations)
-        else:
-            for filename, content in upload_files:
-                filename = os.path.abspath(filename + '.xml')
-                with open(filename, 'w') as f:
-                    f.write(content)
-                self.log.info("OPDS feed saved locally at %s", filename)
-
-        if parsed.search_url and parsed.search_index:
-            search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
-            annotator = ContentServerAnnotator()
-
-            search_documents = []
-
-            # It's slow to do these individually, but this won't run very often.
-            for work in full_query.all():
-                # TODO: A number of works are not able to be added to the feed
-                # or search because they are loaded from the database without
-                # all of their LicensePools (i.e. a single, superceded LicensePool).
-                # Make it stop.
-                if StaticFeedAnnotator.active_licensepool_for(work):
-                    doc = work.to_search_document()
-                    doc["_index"] = search_client.works_index
-                    doc["_type"] = search_client.work_document_type
-                    doc["opds_entry"] = etree.tostring(AcquisitionFeed.single_entry(self._db, work, annotator))
-                    search_documents.append(doc)
-
-            success_count, errors = search_client.bulk(
-                search_documents,
-                raise_on_error=False,
-                raise_on_exception=False,
-            )
-
-            if (len(errors) > 0):
-                self.log.error("%i errors uploading to search index" % len(errors))
-            self.log.info("%i documents uploaded to search index %s on %s" % (success_count, parsed.search_index, parsed.search_url))
-
-    def log_missing_identifiers(self, requested_identifiers, works_qu):
-        """Logs details about requested identifiers that could not be added
-        to the static feeds for whatever reason.
-        """
-        included_ids_qu = works_qu.with_labels().statement.\
-            with_only_columns([Identifier.id])
-        included_ids = self._db.execute(included_ids_qu)
-        included_ids = [i[0] for i in included_ids.fetchall()]
-
-        requested_ids = [i.id for i in requested_identifiers]
-        missing_ids = set(requested_ids).difference(included_ids)
-        if not missing_ids:
-            return
-
-        detail_list = ""
-        bullet = "\n    - "
-        for id in missing_ids:
-            identifier = self._db.query(Identifier).filter(Identifier.id==id).one()
-            license_pool = identifier.licensed_through
-            if not license_pool:
-                detail_list += (bullet + "%r : No LicensePool found." % identifier)
-                continue
-            if license_pool.suppressed:
-                detail_list +=  (bullet + "%r : LicensePool has been suppressed." % license_pool)
-                continue
-            work = license_pool.work
-            if not work:
-                detail_list += (bullet + "%r : No Work found." % license_pool)
-                continue
-            detail_list += (bullet + "%r : Unknown error." % identifier)
-        self.log.warn(
-            "%i identifiers could not be added to the feed. %s",
-            len(missing_ids), detail_list
+        feeds = self.feed_pages_by_filename(
+            feed_id, full_lane, youth_lane,
+            prefix=prefix,
+            license_link=parsed.license,
+            include_search=include_search,
+            page_size=parsed.page_size
         )
+
+        uploader = uploader or S3Uploader()
+        self.load(feeds, uploader=uploader)
+
+        if include_search:
+            search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
+            self.load_index(search_client, full_query)
 
     def make_lanes_from_csv(self, filename):
         """Parses a CSV file and creates the appropriate lane structure
@@ -1246,84 +1598,3 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 parent=parent,
                 include_all=False
             )
-
-    def create_feeds(self, lanes, page_size, annotator):
-        """Creates feeds for facets that may be required
-
-        :return: A dictionary of filenames pointing to a list of CachedFeed
-        objects representing pages
-        """
-        for lane in lanes:
-            annotator.reset(lane)
-            filename = annotator.lane_filename()
-            url = annotator.lane_url(lane)
-            if lane.sublanes:
-                # This is an intermediate lane, without its own works.
-                # It needs a groups feed.
-                self.log.info("Creating groups feed for lane: %s", lane.name)
-                feed = AcquisitionFeed.groups(
-                    self._db, lane.name, url, lane, annotator,
-                    cache_type=AcquisitionFeed.NO_CACHE,
-                    use_materialized_works=False
-                )
-                yield filename, [feed]
-
-                # Return filenames and feeds for any sublanes as well.
-                for filename, feeds in self.create_feeds(
-                    lane.sublanes, page_size, annotator
-                ):
-                    yield filename, feeds
-            else:
-                static_facets = Facets(
-                    collection=Facets.COLLECTION_FULL,
-                    availability=Facets.AVAILABLE_OPEN_ACCESS,
-                    order=Facets.ORDER_TITLE,
-                    enabled_facets=self.DEFAULT_ENABLED_FACETS
-                )
-
-                self.log.info("Creating feed pages for lane: %s", lane.name)
-                for facet_group in list(static_facets.facet_groups):
-                    ordered_by, facet_obj = facet_group[1:3]
-
-                    pagination = Pagination(size=page_size)
-                    feed_pages = self.create_feed_pages(
-                        lane, pagination, url, annotator, facet_obj
-                    )
-
-                    if ordered_by != annotator.DEFAULT_ORDER:
-                        filename += ('_' + ordered_by)
-                    yield filename, feed_pages
-
-    def create_feed_pages(self, lane, pagination, lane_url, annotator, facet):
-        """Yields each page of the feed for a particular lane."""
-        pages = list()
-        previous_page = pagination.previous_page
-        while (not previous_page) or previous_page.has_next_page:
-            page = AcquisitionFeed.page(
-                self._db, lane.name, lane_url, lane,
-                annotator=annotator,
-                facets=facet,
-                pagination=pagination,
-                cache_type=AcquisitionFeed.NO_CACHE,
-                use_materialized_works=False
-            )
-            pages.append(page)
-
-            # Reset values to determine if next page should be created.
-            previous_page = pagination
-            pagination = pagination.next_page
-        return pages
-
-    def create_representations(self, upload_files):
-        representations = list()
-        for filename, content, mirror_url in upload_files:
-            feed_representation = get_one_or_create(
-                self._db, Representation,
-                mirror_url=mirror_url,
-                on_multiple='interchangeable'
-            )[0]
-            feed_representation.set_fetched_content(content, content_path=filename)
-            representations.append(feed_representation)
-        self._db.commit()
-
-        return representations

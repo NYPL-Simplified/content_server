@@ -1,0 +1,36 @@
+{
+  "links" : {
+    "license" : "https://ls.org/license.html"
+  },
+  "policies" : {
+    "lanes" : [
+      {
+        "full_name" : "Fiction",
+        "audiences" : "Adult",
+        "fiction" : true,
+        "excludes_genres" : ["Short Stories"],
+        "sublanes" : [
+          { "full_name" : "Horror",
+            "genres" : "Horror",
+            "sublanes" : [
+              ""]},
+          { "full_name" : "Science Fiction" },
+          { "full_name" : "General Fiction",
+            "fiction" : true }
+        ]
+      },
+      {
+        "full_name" : "Nonfiction",
+        "audiences" : "Adult",
+        "fiction" : false
+      }
+    ]
+  },
+  "integrations" : {
+    "S3" : {
+      "access_key" : "abc",
+      "secret_key" : "123",
+      "static_feed_bucket" : "staticfeed.com"
+    }
+  }
+}

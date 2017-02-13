@@ -1,0 +1,15 @@
+{
+  "links" : {
+    "license" : "https://ls.org/license.html"
+  },
+  "policies" : {
+    "facets" : {}
+  },
+  "integrations" : {
+    "S3" : {
+      "access_key" : "abc",
+      "secret_key" : "123",
+      "static_feed_bucket" : "staticfeed.com"
+    }
+  }
+}

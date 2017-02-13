@@ -1,4 +1,6 @@
+import contextlib
 import feedparser
+import json
 import os
 import tempfile
 from nose.tools import (
@@ -38,8 +40,10 @@ from ..opds import StaticFeedAnnotator
 from ..s3 import DummyS3Uploader
 from ..scripts import (
     CustomListUploadScript,
-    StaticFeedCSVExportScript,
+    CustomListFeedGenerationScript,
     StaticFeedGenerationScript,
+    StaticFeedCSVExportScript,
+    CSVFeedGenerationScript,
 )
 
 
@@ -307,12 +311,288 @@ class TestCustomListUploadScript(DatabaseTest):
             eq_(1, len(full_list.entries_for_work(work)))
 
 
+@contextlib.contextmanager
+def lower_lane_sample_size():
+    setattr(Lane, 'MINIMUM_SAMPLE_SIZE', 1)
+    try:
+        yield
+    finally:
+        delattr(Lane, 'MINIMUM_SAMPLE_SIZE')
+
+
 class TestStaticFeedGenerationScript(DatabaseTest):
 
     def setup(self):
         super(TestStaticFeedGenerationScript, self).setup()
         self.uploader = DummyS3Uploader()
         self.script = StaticFeedGenerationScript(_db=self._db)
+
+    def test_create_feeds(self):
+        omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
+        alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
+        zeta = self._work(title='Zeta', authors='Phi', with_open_access_download=True)
+
+        identifiers = list()
+        for work in [omega, alpha, zeta]:
+            identifier = work.license_pools[0].identifier
+            identifiers.append(identifier)
+        lane = StaticFeedBaseLane(
+            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+        )
+        annotator = StaticFeedAnnotator('https://mta.librarysimplified.org')
+
+        results = list(self.script.create_feeds([lane], annotator))
+
+        eq_(2, len(results))
+        eq_(['index', 'index_author'], sorted([r[0] for r in results]))
+        for filename, [feed] in results:
+            eq_(True, isinstance(feed, unicode))
+            parsed = feedparser.parse(feed)
+            [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
+            if filename == 'index':
+                # The entries are sorted by title, by default.
+                eq_('Title', active_facet_link.get('title'))
+                titles = [e.title for e in parsed.entries]
+                eq_(['Alpha', 'Omega', 'Zeta'], titles)
+
+            if filename == 'index_author':
+                # The entries can also be sorted by author.
+                eq_('Author', active_facet_link.get('title'))
+                authors = [e.simplified_sort_name for e in parsed.entries]
+                eq_(['Iota', 'Phi', 'Theta'], authors)
+
+    def test_create_feed_pages(self):
+        w1 = self._work(with_open_access_download=True)
+        w2 = self._work(with_open_access_download=True)
+
+        identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
+
+        pagination = Pagination(size=1)
+        lane = StaticFeedBaseLane(
+            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+        )
+        facet = Facets('main', 'always', 'author')
+        annotator = StaticFeedAnnotator('https://ls.org', lane)
+
+        result = self.script.create_feed_pages(
+            lane, pagination, 'https://ls.org', annotator, facet
+        )
+
+        # Two feeds are returned with the proper links.
+        [first, second] = result
+        def links_by_rel(parsed_feed, rel):
+            return [l for l in parsed_feed.feed.links if l['rel']==rel]
+
+        parsed = feedparser.parse(first)
+        [entry] = parsed.entries
+        eq_(w1.title, entry.title)
+        eq_(w1.author, entry.simplified_sort_name)
+
+        [next_link] = links_by_rel(parsed, 'next')
+        eq_(next_link.href, 'https://ls.org/index_author_2.xml')
+        eq_([], links_by_rel(parsed, 'previous'))
+        eq_([], links_by_rel(parsed, 'first'))
+
+        parsed = feedparser.parse(second)
+        [entry] = parsed.entries
+        eq_(w2.title, entry.title)
+        eq_(w2.author, entry.simplified_sort_name)
+
+        [previous_link] = links_by_rel(parsed, 'previous')
+        [first_link] = links_by_rel(parsed, 'first')
+        first = 'https://ls.org/index_author.xml'
+        eq_(previous_link.href, first)
+        eq_(first_link.href, first)
+        eq_([], links_by_rel(parsed, 'next'))
+
+
+class TestCustomListFeedGenerationScript(DatabaseTest):
+
+    def setup(self):
+        super(TestCustomListFeedGenerationScript, self).setup()
+
+        self.custom_list, self.entries = self._customlist(
+            foreign_identifier=u'a-list', name=u'A List', num_entries=0,
+            data_source_name=DataSource.LIBRARY_STAFF)
+        self.uploader = DummyS3Uploader()
+        self.script = CustomListFeedGenerationScript(_db=self._db)
+
+    def test_extract_feed_configuration(self):
+
+        # If the feed configuration file is empty, an error is raised.
+        test_file = 'tests/files/scripts/empty.json'
+        cmd_args = ['a-list', test_file, 'https://ls.org']
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        assert_raises(
+            ValueError, self.script.extract_feed_configuration,
+            feed_config, parser
+        )
+
+        # If the parser has a license_link, it isn't overwritten.
+        test_file = 'tests/files/scripts/sample_config.json'
+        cmd_args = [
+            'a-list', test_file, 'https://ls.org',
+            '--license', 'http://samplelicense.net'
+        ]
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        returned_license_link = self.script.extract_feed_configuration(
+            feed_config, parser
+        )[1]
+        eq_('http://samplelicense.net', returned_license_link)
+
+        # Neither is an included uploader.
+        test_file = 'tests/files/scripts/sample_config.json'
+        cmd_args = ['a-list', test_file, 'https://ls.org']
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        uploader = DummyS3Uploader()
+
+        returned_uploader = self.script.extract_feed_configuration(
+            feed_config, parser, uploader=uploader)[3]
+        eq_(uploader, returned_uploader)
+
+        def assert_incomplete_error_raised(config_filename, args=None):
+            test_file = 'tests/files/scripts/%s.json' % config_filename
+            cmd_args = ['a-list', test_file, 'https://ls.org']
+            if args:
+                cmd_args += args
+            parser = self.script.arg_parser().parse_args(cmd_args)
+            feed_config = self.script.get_json_config(test_file)
+            assert_raises(
+                self.script.IncompleteFeedConfigurationError,
+                self.script.extract_feed_configuration, feed_config, parser
+            )
+
+        # An error is raised if there's no lanes policy.
+        assert_incomplete_error_raised('no_lane_policy')
+
+        # Or if the S3 integration is included but incomplete.
+        assert_incomplete_error_raised('no_s3_secret', ['-u'])
+        assert_incomplete_error_raised('no_static_feed_bucket', ['-u'])
+
+        # Or if the Elasticsearch integration is included but incomplete.
+        assert_incomplete_error_raised('no_elasticsearch_url')
+
+        # When the configuration is complete, we get back everything we expect.
+        test_file = 'tests/files/scripts/sample_config.json'
+        cmd_args = ['a-list', test_file, 'https://ls.org', '-u']
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        results = self.script.extract_feed_configuration(feed_config, parser)
+
+        eq_(5, len(results))
+        (lanes_policy, license_link, enabled_facets, uploader, search_client) = results
+
+        eq_(feed_config['policies']['lanes'], lanes_policy)
+        eq_('https://ls.org/license.html', license_link)
+        eq_(feed_config['policies']['facets'], enabled_facets)
+        eq_('abc', uploader.pool.auth.access_key)
+        # Can't create an Elasticsearch client without referring to a
+        # running Elasticsearch instance, which is frustrating here.
+        eq_(None, search_client)
+
+        # Enabled facets aren't required.
+        test_file = 'tests/files/scripts/no_enabled_facets.json'
+        cmd_args = ['a-list', test_file, 'https://ls.org']
+        parser = self.script.arg_parser().parse_args(cmd_args)
+        feed_config = self.script.get_json_config(test_file)
+        results = self.script.extract_feed_configuration(feed_config, parser)
+        eq_(5, len(results))
+        eq_(dict(), enabled_facets)
+
+    def test_run(self):
+        romance = self._work(title="A", with_open_access_download=True, genre='Romance')
+        gothic = self._work(title="B", with_open_access_download=True, genre='Gothic Romance')
+        mystery = self._work(with_open_access_download=True, genre='Hard-Boiled Mystery')
+        paranormal = self._work(with_open_access_download=True, genre='Paranormal Mystery')
+        scifi = self._work(with_open_access_download=True, genre='Science Fiction')
+        short = self._work(with_open_access_download=True, genre='Short Stories')
+        history = self._work(with_open_access_download=True, genre='History', fiction=False)
+        ignored = self._work(with_open_access_download=True)
+
+        works = [romance, gothic, mystery, paranormal, scifi, short, history]
+        for work in works:
+            self.custom_list.add_entry(work.presentation_edition)
+
+        cmd_args = [
+            'a-list', 'tests/files/scripts/sample_config.json',
+            'http://ls.org', '-u'
+        ]
+
+        with lower_lane_sample_size():
+            self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+
+        # All of the expected files have been uploaded.
+        eq_(15, len(self.uploader.content))
+        expected_filenames = [
+            'index', 'fiction', 'fiction_romance',
+            'fiction_romance_author', 'fiction_mystery',
+            'fiction_mystery_hard-boiled-mystery',
+            'fiction_mystery_hard-boiled-mystery_author',
+            'fiction_mystery_paranormal-mystery',
+            'fiction_mystery_paranormal-mystery_author',
+            'fiction_science-fiction', 'fiction_science-fiction_author',
+            'fiction_general-fiction', 'fiction_general-fiction_author',
+            'nonfiction', 'nonfiction_author'
+        ]
+
+        feeds_by_filename = dict()
+        for rep in self.uploader.uploaded:
+            filename = rep.mirror_url.replace(self.uploader.static_feed_root(), '')
+            filename = filename.replace('.xml', '')
+            feeds_by_filename[filename] = feedparser.parse(rep.content)
+
+        # All of the filename that we thought would be uploaded have been.
+        eq_(sorted(expected_filenames), sorted(feeds_by_filename))
+
+        # And the books are where they should be.
+        def assert_match(entry, work):
+            entry.title = work.title
+            entry.author = work.author
+
+        romance_feed = feeds_by_filename['fiction_romance']
+        eq_(2, len(romance_feed.entries))
+        assert_match(romance_feed.entries[0], romance)
+        assert_match(romance_feed.entries[1], gothic)
+
+        hard_boiled_feed = feeds_by_filename['fiction_mystery_hard-boiled-mystery']
+        [entry] = hard_boiled_feed.entries
+        assert_match(entry, mystery)
+
+        paranormal_feed = feeds_by_filename['fiction_mystery_paranormal-mystery']
+        [entry] = paranormal_feed.entries
+        assert_match(entry, paranormal)
+
+        scifi_feed = feeds_by_filename['fiction_science-fiction']
+        [entry] = scifi_feed.entries
+        assert_match(entry, scifi)
+
+        general_feed = feeds_by_filename['fiction_general-fiction']
+        eq_(0, len(general_feed.entries))
+
+        nonfiction_feed = feeds_by_filename['nonfiction']
+        [entry] = nonfiction_feed.entries
+        assert_match(entry, history)
+
+        # While books in excluded genres or outside of the CustomList
+        # are nowhere to be seen.
+        all_entries = list()
+        [all_entries.extend(feed.entries) for feed in feeds_by_filename.values()]
+
+        for feed in feeds_by_filename.values():
+            for entry in feed.entries:
+                assert entry.title not in [short.title, ignored.title]
+                assert entry.author not in [short.author, ignored.author]
+
+
+class TestCSVFeedGenerationScript(DatabaseTest):
+
+    def setup(self):
+        super(TestCSVFeedGenerationScript, self).setup()
+        self.uploader = DummyS3Uploader()
+        self.script = CSVFeedGenerationScript(_db=self._db)
 
     def test_run_with_urns(self):
         not_requested = self._work(with_open_access_download=True)
@@ -327,7 +607,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         urn1 = requested.license_pools[0].identifier.urn
         urn2 = suppressed.license_pools[0].identifier.urn
 
-        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org',
+        cmd_args = ['fake.csv', 'mta.librarysimplified.org',
                     '-u', '--urns', no_pool, urn1, urn2]
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
@@ -363,7 +643,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         w2 = self._work(with_open_access_download=True)
         urns = [work.license_pools[0].identifier.urn for work in [w1, w2]]
 
-        cmd_args = ['fake.csv', '-d', 'http://ls.org', '--page-size', '1',
+        cmd_args = ['fake.csv', 'http://ls.org', '--page-size', '1',
                     '-u', '--urns', urns[0], urns[1]]
         self.script.run(uploader=self.uploader, cmd_args=cmd_args)
 
@@ -393,7 +673,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
         self._db.commit()
 
         url = 'https://ls.org'
-        cmd_args = ['tests/files/scripts/mini.csv', '-d', url, '-u']
+        cmd_args = ['tests/files/scripts/mini.csv', url, '-u']
         cmd_args += args
 
         with temp_config() as config:
@@ -406,7 +686,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
     def test_run_with_csv(self):
         # An incorrect CSV document raises a ValueError when there are
         # also no URNs present.
-        cmd_args = ['fake.csv', '-d', 'mta.librarysimplified.org', '-u']
+        cmd_args = ['fake.csv', 'mta.librarysimplified.org', '-u']
         assert_raises(
             ValueError, self.script.run, uploader=self.uploader,
             cmd_args=cmd_args
@@ -604,81 +884,3 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             eq_(expected[lane.name], lane.languages)
             for sublane in lane.sublanes:
                 eq_(expected[lane.name], sublane.languages)
-
-    def test_create_feeds(self):
-        omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
-        alpha = self._work(title='Alpha', authors='Theta', with_open_access_download=True)
-        zeta = self._work(title='Zeta', authors='Phi', with_open_access_download=True)
-
-        identifiers = list()
-        for work in [omega, alpha, zeta]:
-            identifier = work.license_pools[0].identifier
-            identifiers.append(identifier)
-        lane = StaticFeedBaseLane(
-            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
-        )
-        annotator = StaticFeedAnnotator('https://mta.librarysimplified.org')
-
-        results = list(self.script.create_feeds([lane], 50, annotator))
-
-        eq_(2, len(results))
-        eq_(['index', 'index_author'], sorted([r[0] for r in results]))
-        for filename, [feed] in results:
-            eq_(True, isinstance(feed, unicode))
-            parsed = feedparser.parse(feed)
-            [active_facet_link] = [l for l in parsed.feed.links if l.get('activefacet')]
-            if filename == 'index':
-                # The entries are sorted by title, by default.
-                eq_('Title', active_facet_link.get('title'))
-                titles = [e.title for e in parsed.entries]
-                eq_(['Alpha', 'Omega', 'Zeta'], titles)
-
-            if filename == 'index_author':
-                # The entries can also be sorted by author.
-                eq_('Author', active_facet_link.get('title'))
-                authors = [e.simplified_sort_name for e in parsed.entries]
-                eq_(['Iota', 'Phi', 'Theta'], authors)
-
-    def test_create_feed_pages(self):
-        w1 = self._work(with_open_access_download=True)
-        w2 = self._work(with_open_access_download=True)
-
-        identifiers = [w.license_pools[0].identifier for w in [w1, w2]]
-
-        pagination = Pagination(size=1)
-        lane = StaticFeedBaseLane(
-            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
-        )
-        facet = Facets('main', 'always', 'author')
-        annotator = StaticFeedAnnotator('https://ls.org', lane)
-
-        result = self.script.create_feed_pages(
-            lane, pagination, 'https://ls.org', annotator, facet
-        )
-
-        # Two feeds are returned with the proper links.
-        [first, second] = result
-        def links_by_rel(parsed_feed, rel):
-            return [l for l in parsed_feed.feed.links if l['rel']==rel]
-
-        parsed = feedparser.parse(first)
-        [entry] = parsed.entries
-        eq_(w1.title, entry.title)
-        eq_(w1.author, entry.simplified_sort_name)
-
-        [next_link] = links_by_rel(parsed, 'next')
-        eq_(next_link.href, 'https://ls.org/index_author_2.xml')
-        eq_([], links_by_rel(parsed, 'previous'))
-        eq_([], links_by_rel(parsed, 'first'))
-
-        parsed = feedparser.parse(second)
-        [entry] = parsed.entries
-        eq_(w2.title, entry.title)
-        eq_(w2.author, entry.simplified_sort_name)
-
-        [previous_link] = links_by_rel(parsed, 'previous')
-        [first_link] = links_by_rel(parsed, 'first')
-        first = 'https://ls.org/index_author.xml'
-        eq_(previous_link.href, first)
-        eq_(first_link.href, first)
-        eq_([], links_by_rel(parsed, 'next'))
