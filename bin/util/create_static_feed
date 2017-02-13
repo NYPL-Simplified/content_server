@@ -15,5 +15,5 @@ bin_dir = path.split(__file__)[0]
 package_dir = path.join(bin_dir, '..', '..')
 sys.path.append(path.abspath(package_dir))
 
-from scripts import StaticFeedGenerationScript
-StaticFeedGenerationScript().run()
+from scripts import CSVFeedGenerationScript
+CSVFeedGenerationScript().run()

@@ -41,9 +41,9 @@ from ..s3 import DummyS3Uploader
 from ..scripts import (
     CustomListUploadScript,
     CustomListFeedGenerationScript,
-    FeedGenerationScript,
-    StaticFeedCSVExportScript,
     StaticFeedGenerationScript,
+    StaticFeedCSVExportScript,
+    CSVFeedGenerationScript,
 )
 
 
@@ -320,12 +320,12 @@ def lower_lane_sample_size():
         delattr(Lane, 'MINIMUM_SAMPLE_SIZE')
 
 
-class TestFeedGenerationScript(DatabaseTest):
+class TestStaticFeedGenerationScript(DatabaseTest):
 
     def setup(self):
-        super(TestFeedGenerationScript, self).setup()
+        super(TestStaticFeedGenerationScript, self).setup()
         self.uploader = DummyS3Uploader()
-        self.script = FeedGenerationScript(_db=self._db)
+        self.script = StaticFeedGenerationScript(_db=self._db)
 
     def test_create_feeds(self):
         omega = self._work(title='Omega', authors='Iota', with_open_access_download=True)
@@ -587,12 +587,12 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
                 assert entry.author not in [short.author, ignored.author]
 
 
-class TestStaticFeedGenerationScript(DatabaseTest):
+class TestCSVFeedGenerationScript(DatabaseTest):
 
     def setup(self):
-        super(TestStaticFeedGenerationScript, self).setup()
+        super(TestCSVFeedGenerationScript, self).setup()
         self.uploader = DummyS3Uploader()
-        self.script = StaticFeedGenerationScript(_db=self._db)
+        self.script = CSVFeedGenerationScript(_db=self._db)
 
     def test_run_with_urns(self):
         not_requested = self._work(with_open_access_download=True)

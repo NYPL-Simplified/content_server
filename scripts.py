@@ -344,7 +344,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
     If requested categories are passed in via an existing CSV, this
     script will add headers to represent those categories, in a proper
-    format for StaticFeedGenerationScript.
+    format for CSVFeedGenerationScript.
     """
 
     class CategoryNode(object):
@@ -956,7 +956,7 @@ class CustomListUploadScript(StaticFeedScript):
         return overwritten_editions
 
 
-class FeedGenerationScript(StaticFeedScript):
+class StaticFeedGenerationScript(StaticFeedScript):
 
     DEFAULT_ENABLED_FACETS = {
         Facets.ORDER_FACET_GROUP_NAME : [
@@ -1180,7 +1180,7 @@ class FeedGenerationScript(StaticFeedScript):
             success_count, search_client.works_index))
 
 
-class CustomListFeedGenerationScript(FeedGenerationScript):
+class CustomListFeedGenerationScript(StaticFeedGenerationScript):
 
     class IncompleteFeedConfigurationError(ValueError):
         """The feed configuration file does not have all required values."""
@@ -1392,11 +1392,11 @@ class CustomListFeedGenerationScript(FeedGenerationScript):
             **kwargs)
 
 
-class StaticFeedGenerationScript(FeedGenerationScript):
+class CSVFeedGenerationScript(StaticFeedGenerationScript):
 
     @classmethod
     def arg_parser(cls):
-        parser = super(StaticFeedGenerationScript, cls).arg_parser()
+        parser = super(CSVFeedGenerationScript, cls).arg_parser()
         parser.add_argument(
             'source_csv', help='A CSV file to import URNs and Lane categories'
         )
