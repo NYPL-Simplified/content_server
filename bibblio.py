@@ -61,3 +61,16 @@ class BibblioAPI(object):
         expires_in = data.get('expires_in')
         credential.expires = datetime.utcnow() + timedelta(0, expires_in * 0.9)
         self._credential = credential
+
+
+class BibblioContentExtractor(object):
+
+    def __init__(self, _db):
+        self._db = _db
+
+    def extract_plaintext(self, identifier):
+        identifier = 
+        license_pool = edition.license_pool
+
+    def extract_content(self):
+        pass
