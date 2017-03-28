@@ -17,7 +17,9 @@ from core.model import (
     Representation,
     RightsStatus,
 )
+from core.util.epub import EpubAccessor
 from core.util.http import HTTP
+
 
 class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
 
@@ -185,53 +187,35 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         """This function will replace the content of every CSS file listed in an epub's
         manifest with the value in self.new_css. The rest of the file is not changed.
         """
+        if not (representation.media_type == Representation.EPUB_MEDIA_TYPE and representation.content):
+            return
 
-        if representation.media_type == Representation.EPUB_MEDIA_TYPE and representation.content:
+        new_zip_content = StringIO()
+        with EpubAccessor.open_epub(representation.url, content=representation.content) as (zip_file, package_path):
+            try:
+                manifest_element = EpubAccessor.get_element_from_package(
+                    zip_file, package_path, 'manifest'
+                )
+            except ValueError as e:
+                # Invalid EPUB
+                self.log.warning("%s: %s" % (representation.url, e.message))
+                return
 
-            old_zip_content = StringIO(representation.content)
-            new_zip_content = StringIO()
+            css_paths = []
+            for child in manifest_element:
+                if child.tag == ("{%s}item" % EpubAccessor.IDPF_NAMESPACE):
+                    if child.get('media-type') == "text/css":
+                        href = package_path.replace(os.path.basename(package_path), child.get("href"))
+                        css_paths.append(href)
 
-            with ZipFile(old_zip_content) as old_zip:
-                if not "META-INF/container.xml" in old_zip.namelist():
-                    self.log.warning("Invalid EPUB file, not modifying: %s" % representation.url)
-                    return
+            with ZipFile(new_zip_content, "w") as new_zip:
+                for item in zip_file.infolist():
+                    if item.filename not in css_paths:
+                        new_zip.writestr(item, zip_file.read(item.filename))
+                    else:
+                        new_zip.writestr(item, self.new_css)
 
-                with old_zip.open("META-INF/container.xml") as container_file:
-                    container = container_file.read()
-                    rootfiles_element = etree.fromstring(container).find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfiles")
-                    if rootfiles_element is None:
-                        self.log.warning("Invalid EPUB file, not modifying: %s" % representation.url)
-                        return
-
-                    rootfile_element = rootfiles_element.find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfile")
-                    if rootfile_element is None:
-                        self.log.warning("Invalid EPUB file, not modifying: %s" % representation.url)
-                        return
-
-                    package_path = rootfile_element.get('full-path')
-
-                with old_zip.open(package_path) as package_file:
-                    package = package_file.read()
-                    manifest_element = etree.fromstring(package).find("{http://www.idpf.org/2007/opf}manifest")
-                    if manifest_element is None:
-                        self.log.warning("Invalid EPUB file, not modifying: %s" % representation.url)
-                        return
-
-                    css_paths = []
-                    for child in manifest_element:
-                        if child.tag == "{http://www.idpf.org/2007/opf}item":
-                            if child.get('media-type') == "text/css":
-                                href = package_path.replace(os.path.basename(package_path), child.get("href"))
-                                css_paths.append(href)
-            
-                with ZipFile(new_zip_content, "w") as new_zip:
-                    for item in old_zip.infolist():
-                        if item.filename not in css_paths:
-                            new_zip.writestr(item, old_zip.read(item.filename))
-                        else:
-                            new_zip.writestr(item, self.new_css)
-
-            representation.content = new_zip_content.getvalue()
+        representation.content = new_zip_content.getvalue()
 
 
 class RehostingPolicy(object):
