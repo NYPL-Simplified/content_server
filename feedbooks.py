@@ -5,6 +5,7 @@ from StringIO import StringIO
 from zipfile import ZipFile
 from lxml import etree
 import os
+
 from core.opds import OPDSFeed
 from core.opds_import import (
     OPDSImporterWithS3Mirror,
@@ -59,7 +60,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         to wait until we enter elementtree code.
         """
         return None
-        
+
     @classmethod
     def rights_uri_from_entry_tag(cls, entry):
         rights = OPDSXMLParser._xpath1(entry, 'atom:rights')
@@ -90,7 +91,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         circulation = detail.setdefault('circulation', {})
         circulation['default_rights_uri'] =rights_uri
         return detail
-        
+
     @classmethod
     def make_link_data(cls, rel, href=None, media_type=None, rights_uri=None,
                        content=None):
@@ -109,7 +110,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         return super(FeedbooksOPDSImporter, cls).make_link_data(
             rel, href, media_type, rights_uri, content
         )
-    
+
     def improve_description(self, id, metadata):
         """Improve the description associated with a book,
         if possible.
@@ -143,7 +144,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
 
             if representation.status_code != 200:
                 continue
-            
+
             # Parse the alternate entry with feedparser and run it through
             # data_detail_for_feedparser_entry().
             parsed = feedparser.parse(representation.content)
@@ -159,7 +160,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
                 # There was a problem parsing the entry.
                 self.log.error(failure.exception)
                 continue
-            
+
             # TODO: Ideally we could verify that detail_id == id, but
             # right now they are always different -- one is an HTTPS
             # URI and one is an HTTP URI. So we omit this step and
@@ -223,32 +224,32 @@ class RehostingPolicy(object):
     is not directly useful, because Feedbooks has made derivative
     works and relicensed under CC-BY-NC. So that's going to be the
     license: CC-BY-NC.
-    
+
     Except it's not that simple. There are two complications.
-    
+
     1. Feedbooks is located in France, and NYPL's open-access
     content server is hosted in the US. We can't host a CC-BY-NC
     book if it's derived from a work that's still under US
     copyright. We must decide whether or not to accept a book in the
     first place based on the copyright status of the underlying
     text.
-    
+
     2. Some CC licenses are more restrictive (on the creators of
     derivative works) than CC-BY-NC. Feedbooks has no authority to
     relicense these books, so they need to be preserved.
 
     This class encapsulates the logic necessary to make this decision.
     """
-    
-    PUBLIC_DOMAIN_CUTOFF = 1923    
+
+    PUBLIC_DOMAIN_CUTOFF = 1923
 
     # These are the licenses that need to be preserved.
-    RIGHTS_DICT = {    
+    RIGHTS_DICT = {
         "Attribution Share Alike (cc by-sa)" : RightsStatus.CC_BY_SA,
         "Attribution Non-Commercial No Derivatives (cc by-nc-nd)" : RightsStatus.CC_BY_NC_ND,
         "Attribution Non-Commercial Share Alike (cc by-nc-sa)" : RightsStatus.CC_BY_NC_SA,
     }
-    
+
     # Feedbooks rights statuses indicating books that can be rehosted
     # in the US.
     CAN_REHOST_IN_US = set([
@@ -264,7 +265,7 @@ class RehostingPolicy(object):
     ])
 
     RIGHTS_UNKNOWN = "Please read the legal notice included in this e-book and/or check the copyright status in your country."
-    
+
     # These websites are hosted in the US and specialize in
     # open-access content. We will accept all FeedBooks titles taken
     # from these sites, even post-1923 titles.
@@ -302,7 +303,7 @@ class RehostingPolicy(object):
 
         # The default license as per our agreement with FeedBooks.
         return RightsStatus.CC_BY_NC
-    
+
     @classmethod
     def can_rehost_us(cls, rights, source, publication_year):
         """Can we rehost this book on a US server?
@@ -318,17 +319,17 @@ class RehostingPolicy(object):
         None if we're not sure. The distinction between False and None
         is only useful when making lists of books that need to have
         their rights status manually investigated.
-        """    
+        """
         if publication_year and publication_year < cls.PUBLIC_DOMAIN_CUTOFF:
             # We will rehost anything published prior to 1923, no
             # matter where it came from.
             return True
-        
+
         if rights in cls.CAN_REHOST_IN_US:
             # This book's FeedBooks rights statement explicitly marks
             # it as one that can be rehosted in the US.
             return True
-            
+
         # The rights statement isn't especially helpful, but maybe we
         # can make a determination based on where Feedbooks got the
         # book from.
@@ -345,12 +346,12 @@ class RehostingPolicy(object):
             # special case these to avoid confusing the US versions of
             # these sites with other countries'.
             return True
-                
+
         # And we special-case this one to avoid confusing Australian
         # Project Gutenberg with US Project Gutenberg.
         if ('gutenberg.net' in source and not 'gutenberg.net.au' in source):
             return True
-        
+
         # Unless one of the above conditions is met, we must assume
         # the book cannot be rehosted in the US.
         if rights == cls.RIGHTS_UNKNOWN:
