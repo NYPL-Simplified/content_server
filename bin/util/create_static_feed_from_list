@@ -1,0 +1,23 @@
+#!/usr/bin/env python
+"""Create static feed pages from a CustomList
+
+This example creates a number of feeds for a CustomList with the
+`foreign_identifier` my-custom-list, to be placed at
+https://librarysimplified.org/banana/index.xml.
+
+$ bin/util/create_static_feed_from_list my-custom-list my_list_config.json \
+> -d https://librarysimplified.org --prefix banana/
+
+See https://github.com/NYPL-Simplified/Simplified/wiki/LaneConfiguration
+for more details on setting lane organization in your configuration file.
+"""
+import sys
+from nose.tools import set_trace
+from os import path
+
+bin_dir = path.split(__file__)[0]
+package_dir = path.join(bin_dir, '..', '..')
+sys.path.append(path.abspath(package_dir))
+
+from scripts import CustomListFeedGenerationScript
+CustomListFeedGenerationScript().run()
