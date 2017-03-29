@@ -25,12 +25,11 @@ class BibblioAPI(object):
     @classmethod
     def from_config(cls, _db):
         config = Configuration.integration(Configuration.BIBBLIO_INTEGRATION)
-        if not config and len(config.values()) == 2:
+        if not (config and len(config.values())==2):
             return None
 
         client_id = config.get(Configuration.BIBBLIO_ID)
         client_secret = config.get(Configuration.BIBBLIO_SECRET)
-
         return cls(_db, client_id, client_secret)
 
     def __init__(self, _db, client_id, client_secret):
