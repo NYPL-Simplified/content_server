@@ -43,6 +43,17 @@ class BibblioAPI(object):
         client_secret = config.get(Configuration.BIBBLIO_SECRET)
         return cls(_db, client_id, client_secret)
 
+    @classmethod
+    def set_timestamp(cls, resource, create=False):
+        """Adds a timestamp to a resource (catalogue or content item)"""
+
+        now = datetime.utcnow().isoformat() + 'Z'
+        resource['dateModified'] = now
+        if create:
+            resource['dateCreated'] = now
+
+        return resource
+
     def __init__(self, _db, client_id, client_secret):
         self._db = _db
         self.client_id = client_id
@@ -89,7 +100,7 @@ class BibblioAPI(object):
         if description:
             catalogue['description'] = description
 
-        catalogue = self.timestamp(catalogue, create=True)
+        catalogue = self.set_timestamp(catalogue, create=True)
         catalogue = json.dumps(catalogue)
 
         response = HTTP.post_with_timeout(
@@ -120,7 +131,7 @@ class BibblioAPI(object):
                 return None
 
     def create_content_item(self, content_item):
-        content_item = self.timestamp(content_item, create=True)
+        content_item = self.set_timestamp(content_item, create=True)
         content_item = json.dumps(content_item)
         response = HTTP.post_with_timeout(
             self.CONTENT_ITEMS_ENDPOINT, content_item,
@@ -137,16 +148,6 @@ class BibblioAPI(object):
                 name, content_item_id
             )
             return content_item
-
-    def timestamp(self, resource, create=False):
-        """Adds a timestamp to a resource (catalogue or content item)"""
-
-        now = datetime.utcnow().isoformat() + 'Z'
-        resource['dateModified'] = now
-        if create:
-            resource['dateCreated'] = now
-
-        return resource
 
 
 class BibblioCoverageProvider(object):
