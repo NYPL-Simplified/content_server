@@ -6,7 +6,10 @@ from nose.tools import (
 )
 from StringIO import StringIO
 from zipfile import ZipFile
-from . import DatabaseTest
+from . import (
+    DatabaseTest,
+    sample_data,
+)
 from ..feedbooks import (
     FeedbooksOPDSImporter,
     RehostingPolicy,
@@ -48,13 +51,8 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             offers_licenses=True
         )
 
-        base_path = os.path.split(__file__)[0]
-        self.resource_path = os.path.join(base_path, "files", "feedbooks")
-
     def sample_file(self, filename):
-        path = os.path.join(self.resource_path, filename)
-        data = open(path).read()
-        return data
+        return sample_data(filename, "feedbooks")
 
     def test_extract_feed_data_improves_descriptions(self):
         feed = self.sample_file("feed.atom")

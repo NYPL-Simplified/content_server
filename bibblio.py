@@ -152,7 +152,7 @@ class BibblioAPI(object):
 
 class BibblioCoverageProvider(object):
 
-    BIBBLIO_TEXT_LIMITATION = 200000
+    BIBBLIO_TEXT_LIMIT = 200000
     TEXT_MEDIA_TYPES = [
         Representation.TEXT_PLAIN,
         Representation.TEXT_HTML_MEDIA_TYPE,
@@ -180,7 +180,8 @@ class BibblioCoverageProvider(object):
 
         return content_item
 
-    def edition_permalink(self, edition):
+    @classmethod
+    def edition_permalink(cls, edition):
         base_url = Configuration.integration_url(
             Configuration.CONTENT_SERVER_INTEGRATION, required=True
         )
@@ -233,7 +234,8 @@ class BibblioCoverageProvider(object):
                 representation.resource.data_source
             )
 
-    def extract_plaintext_from_epub(self, zip_file, package_document_path):
+    @classmethod
+    def extract_plaintext_from_epub(cls, zip_file, package_document_path):
         spine, manifest = EpubAccessor.get_elements_from_package(
             zip_file, package_document_path, ['spine', 'manifest']
         )
@@ -260,12 +262,13 @@ class BibblioCoverageProvider(object):
         accumulated_text = u''
         for filename in text_filenames:
             with zip_file.open(filename) as text_file:
-                raw_text = self._html_to_text(text_file.read())
+                raw_text = cls._html_to_text(text_file.read())
                 accumulated_text += raw_text
 
-        return self._shrink_text(accumulated_text)
+        return cls._shrink_text(accumulated_text)
 
-    def _shrink_text(self, text):
+    @classmethod
+    def _shrink_text(cls, text):
         """Removes excessive whitespace and shortens text according to
         the API requirements
         """
@@ -273,8 +276,9 @@ class BibblioCoverageProvider(object):
         text = re.sub(r'\t{2,}', '\t', text)
         text = re.sub(r' {2,}', ' ', text)
 
-        return text.encode('utf-8')[0:self.BIBBLIO_TEXT_LIMITATION]
+        return text.encode('utf-8')[0:cls.BIBBLIO_TEXT_LIMIT]
 
-    def _html_to_text(self, html_content):
+    @classmethod
+    def _html_to_text(cls, html_content):
         """Returns raw text from HTML"""
         return BeautifulSoup(html_content, 'lxml').get_text()
