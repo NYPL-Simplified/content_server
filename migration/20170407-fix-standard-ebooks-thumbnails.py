@@ -127,8 +127,7 @@ try:
             Representation.mirror_url.like(LIKE_EXTENSION),
             or_(
                 Work.verbose_opds_entry.like(LIKE_EXTENSION),
-                Work.simple_opds_entry.like(LIKE_EXTENSION)),
-            or_(
+                Work.simple_opds_entry.like(LIKE_EXTENSION),
                 Representation.mirror_url.in_(BROKEN_IMAGE_URLS),
                 Edition.cover_full_url.in_(BROKEN_IMAGE_URLS),
                 Edition.cover_thumbnail_url.in_(BROKEN_IMAGE_URLS)))
