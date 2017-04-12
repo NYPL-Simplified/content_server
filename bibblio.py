@@ -27,10 +27,7 @@ from core.model import (
     Work,
 )
 from core.util.epub import EpubAccessor
-from core.util.http import (
-    HTTP,
-    RemoteIntegrationException,
-)
+from core.util.http import HTTP
 
 from config import Configuration
 
@@ -229,15 +226,9 @@ class BibblioCoverageProvider(CoverageProvider):
 
         try:
             result = self.api.create_content_item(content_item)
-        except RemoteIntegrationException as e:
-            error = "%s\n\n%s" % (e.message, (e.debug_message or e.detail))
-            return CoverageFailure(
-                identifier, error, data_source=self.output_source,
-                transient=True
-            )
         except Exception as e:
             return CoverageFailure(
-                identifier, e.message, data_source=self.output_source,
+                identifier, str(e), data_source=self.output_source,
                 transient=True
             )
 

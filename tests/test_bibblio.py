@@ -9,7 +9,10 @@ from . import (
     sample_data,
 )
 
-from ..core.coverage import CoverageRecord
+from ..core.coverage import (
+    CoverageFailure,
+    CoverageRecord,
+)
 from ..core.model import (
     DataSource,
     Hyperlink,
@@ -17,6 +20,7 @@ from ..core.model import (
     Representation,
 )
 from ..core.util.epub import EpubAccessor
+from ..core.util.http import BadResponseException
 
 from ..config import (
     Configuration,
@@ -31,12 +35,12 @@ from ..bibblio import (
 
 class MockBibblioAPI(object):
 
-    def __init__(self, error_class=None):
-        self.error_class = None
+    def __init__(self, error=None):
+        self.error = None
 
     def create_content_item(self, identifier):
-        if self.error_class:
-            raise self.error_class()
+        if self.error:
+            raise self.error
 
         return json.loads("""{
           "catalogueId": "9e904824-5f98-4281-99be-931a8d68854e",
@@ -225,8 +229,15 @@ class TestBibblioCoverageProvider(DatabaseTest):
     def test_process_item(self):
         representation = self.identifier.links[0].resource.representation
         representation.content = self.sample_file('180.epub')
-        result = self.provider.process_item(self.identifier)
 
+        def process_item(item):
+            with temp_config() as config:
+                config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
+                    Configuration.URL : 'https://www.testing.code'
+                }
+                return self.provider.process_item(item)
+
+        result = process_item(self.identifier)
         eq_(self.identifier, result)
 
         # An equivalent identifier has been created.
@@ -236,6 +247,32 @@ class TestBibblioCoverageProvider(DatabaseTest):
         bibblio_id = equivalency.output
         eq_(Identifier.BIBBLIO_CONTENT_ITEM_ID, bibblio_id.type)
         eq_('510b1ee0-bede-4e24-a379-6a387f2dbb64', bibblio_id.identifier)
+
+        def assert_is_coverage_failure_for(result, item, data_source, transient=True):
+            eq_(True, isinstance(result, CoverageFailure))
+            eq_(item, result.obj)
+            eq_(data_source, result.data_source)
+            eq_(transient, result.transient)
+
+        # When the API raises an error, a CoverageFailure is returned.
+        self.provider.api.error = BadResponseException(
+            'fake-bibblio.org', 'Got a bad 401')
+        result = process_item(self.identifier)
+
+        assert_is_coverage_failure_for(
+            result, self.identifier, self.provider.output_source
+        )
+        assert 'fake-bibblio.org' in result.exception
+        assert '401' in result.exception
+
+        # In fact, when any error is raised, an appropriate
+        # CoverageFailure is returned.
+        self.provider.api.error = ValueError("B A N A N A S")
+        result = process_item(self.identifier)
+        assert_is_coverage_failure_for(
+            result, self.identifier, self.provider.output_source
+        )
+        eq_("B A N A N A S", result.exception)
 
     def test_add_coverage_record_for(self):
         source = DataSource.lookup(self._db, DataSource.OVERDRIVE)
@@ -260,12 +297,18 @@ class TestBibblioCoverageProvider(DatabaseTest):
             self.sample_file('180.epub')
         )
 
-        result = self.provider.content_item_from_identifier(self.identifier)
+        with temp_config() as config:
+            config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
+                Configuration.URL : 'https://www.testing.code'
+            }
+            result = self.provider.content_item_from_identifier(self.identifier)
+
         eq_(['name', 'provider', 'text', 'url'], sorted(result.keys()))
 
         eq_('%s by %s' % (self.edition.title, self.edition.author), result.get('name'))
         eq_({ 'name' : DataSource.PLYMPTON }, result['provider'])
-        eq_(self.provider.edition_permalink(self.edition), result['url'])
+        expected_url = u'https://www.testing.code/lookup?urn=' + self.identifier.urn
+        eq_(expected_url, result['url'])
 
     def test_edition_permalink(self):
         urn = self.identifier.urn
