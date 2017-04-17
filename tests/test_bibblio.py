@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 from nose.tools import eq_, set_trace
 from random import choice
+from urllib import quote
 
 from . import (
     DatabaseTest,
@@ -304,14 +305,15 @@ class TestBibblioCoverageProvider(DatabaseTest):
             result = self.provider.content_item_from_work(self.work)
 
         eq_(['name', 'provider', 'text', 'url'], sorted(result.keys()))
-
         eq_('%s by %s' % (self.edition.title, self.edition.author), result.get('name'))
         eq_({ 'name' : DataSource.PLYMPTON }, result['provider'])
-        expected_url = u'https://www.testing.code/lookup?urn=' + self.identifier.urn
+
+        url_urn = quote(self.identifier.urn).replace('/', '%2F')
+        expected_url = u'https://www.testing.code/lookup?urn=' + url_urn
         eq_(expected_url, result['url'])
 
     def test_edition_permalink(self):
-        urn = self.identifier.urn
+        urn = quote(self.identifier.urn).replace('/', '%2F')
         with temp_config() as config:
             config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
                 Configuration.URL : 'https://www.testing.code'

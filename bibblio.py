@@ -35,6 +35,7 @@ from core.model import (
 from core.util.epub import EpubAccessor
 from core.util.http import HTTP
 
+from flask import url_for
 from config import Configuration
 
 
@@ -281,7 +282,19 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         base_url = '://'.join([scheme, host])
 
         urn = edition.primary_identifier.urn
-        permalink = '%s/lookup?urn=%s' % (base_url, urn)
+        permalink = None
+        initialization_value = os.environ.get('AUTOINITIALIZE')
+        try:
+            os.environ['AUTOINITIALIZE'] = 'False'
+            from app import app
+            with app.test_request_context(base_url):
+                permalink = base_url + url_for('lookup', urn=urn)
+
+        finally:
+            os.unsetenv('AUTOINITIALIZE')
+            if initialization_value:
+                os.environ['AUTOINITIALIZE'] = initialization_value
+
         return permalink
 
     def get_full_text(self, work):
