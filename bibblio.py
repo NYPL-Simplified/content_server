@@ -23,9 +23,11 @@ from core.model import (
     CustomList,
     CustomListEntry,
     DataSource,
+    DeliveryMechanism,
     Edition,
-    Hyperlink,
     Identifier,
+    LicensePool,
+    LicensePoolDeliveryMechanism,
     Representation,
     Resource,
     Work,
@@ -230,7 +232,7 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         return qu
 
     def process_item(self, work):
-        content_item = self.content_item_from_edition(work.presentation_edition)
+        content_item = self.content_item_from_work(work)
 
         try:
             result = self.api.create_content_item(content_item)
@@ -254,10 +256,12 @@ class BibblioCoverageProvider(WorkCoverageProvider):
             )
         return work
 
-    def content_item_from_edition(self, edition):
+    def content_item_from_work(self, work):
+        edition = work.presentation_edition
+
         name = edition.title + ' by ' + edition.author
         url = self.edition_permalink(edition)
-        text, data_source = self.get_full_text(edition)
+        text, data_source = self.get_full_text(work)
         provider = dict(name=data_source.name)
 
         content_item = dict(
@@ -280,17 +284,17 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         permalink = '%s/lookup?urn=%s' % (base_url, urn)
         return permalink
 
-    def get_full_text(self, edition_or_identifier):
-        identifier = edition_or_identifier
-        if not isinstance(edition_or_identifier, Identifier):
-            identifier = edition_or_identifier.primary_identifier
-
+    def get_full_text(self, work):
         representations = self._db.query(Representation)\
-            .join(Representation.resource).join(Resource.links)\
-            .join(Hyperlink.identifier).filter(
-                Identifier.id==identifier.id,
-                Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD)\
-            .options(eagerload(Representation.resource))
+            .join(Representation.resource)\
+            .join(Resource.licensepooldeliverymechanisms)\
+            .join(LicensePoolDeliveryMechanism.license_pool)\
+            .join(LicensePoolDeliveryMechanism.delivery_mechanism)\
+            .filter(
+                LicensePool.work_id==work.id,
+                DeliveryMechanism.drm_scheme==DeliveryMechanism.NO_DRM)\
+            .options(
+                eagerload(Representation.resource, Resource.data_source))
 
         text_representation = representations.filter(
             Representation.media_type.in_(self.TEXT_MEDIA_TYPES),

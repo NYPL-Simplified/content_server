@@ -15,9 +15,11 @@ from ..core.coverage import (
 )
 from ..core.model import (
     DataSource,
+    DeliveryMechanism,
     Hyperlink,
     Identifier,
     Representation,
+    RightsStatus,
 )
 from ..core.util.epub import EpubAccessor
 from ..core.util.http import BadResponseException
@@ -152,13 +154,12 @@ class TestBibblioCoverageProvider(DatabaseTest):
                            identifier=None):
         """Utility method to add representations to the local identifier"""
         identifier = identifier or self.identifier
-
+        pool = identifier.licensed_through
         url = self._url + '/' + media_type
         source = DataSource.lookup(self._db, source_name)
 
         link, _ = identifier.add_link(
-            Hyperlink.OPEN_ACCESS_DOWNLOAD, url, source,
-            self.identifier.licensed_through
+            Hyperlink.OPEN_ACCESS_DOWNLOAD, url, source, pool
         )
 
         representation, _ = self._representation(
@@ -167,6 +168,11 @@ class TestBibblioCoverageProvider(DatabaseTest):
 
         link.resource.data_source = source
         link.resource.representation = representation
+        pool.set_delivery_mechanism(
+            media_type, DeliveryMechanism.NO_DRM,
+            RightsStatus.GENERIC_OPEN_ACCESS,
+            link.resource,
+        )
         return representation
 
     def test_items_that_need_coverage(self):
@@ -285,7 +291,7 @@ class TestBibblioCoverageProvider(DatabaseTest):
         )
         eq_("B A N A N A S", result.exception)
 
-    def test_content_item_from_edition(self):
+    def test_content_item_from_work(self):
         self.add_representation(
             DataSource.PLYMPTON, Representation.EPUB_MEDIA_TYPE,
             self.sample_file('180.epub')
@@ -295,7 +301,7 @@ class TestBibblioCoverageProvider(DatabaseTest):
             config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
                 Configuration.URL : 'https://www.testing.code'
             }
-            result = self.provider.content_item_from_edition(self.edition)
+            result = self.provider.content_item_from_work(self.work)
 
         eq_(['name', 'provider', 'text', 'url'], sorted(result.keys()))
 
@@ -317,38 +323,36 @@ class TestBibblioCoverageProvider(DatabaseTest):
         eq_(expected, result)
 
     def test_get_full_text_uses_easiest_representation(self):
-
-        html_rep = self.add_representation(
-            DataSource.UNGLUE_IT, Representation.TEXT_HTML_MEDIA_TYPE,
-            "<p>bleh bleh bleh</p>"
-        )
-
-        text_rep = self.add_representation(
-            DataSource.GUTENBERG, Representation.TEXT_PLAIN, "blah blah blah"
-        )
-
         epub_content = self.sample_file('180.epub')
         epub_rep = self.add_representation(
             DataSource.FEEDBOOKS, Representation.EPUB_MEDIA_TYPE, epub_content
         )
 
-        text, data_source = self.provider.get_full_text(self.edition)
-        # Despite the plethora of options, the plaintext is used.
-        eq_("blah blah blah", text)
+        text_rep = self.add_representation(
+            DataSource.GUTENBERG, Representation.TEXT_PLAIN, 'blah'
+        )
+
+        text, data_source = self.provider.get_full_text(self.work)
+        # The plaintext is used instead of the EPUB.
+        eq_('blah', text)
         eq_(DataSource.GUTENBERG, data_source.name)
 
         # If a text representation doesn't have content, a different
-        # representation is selected.
+        # text representation is selected.
         text_rep.content = None
-        text, data_source = self.provider.get_full_text(self.identifier)
+        html_rep = self.add_representation(
+            DataSource.UNGLUE_IT, Representation.TEXT_HTML_MEDIA_TYPE,
+            '<p>BLEH</p>'
+        )
         # In this case, the html representation is selected. Its HTML
         # tags have been removed.
-        eq_("bleh bleh bleh", text)
+        text, data_source = self.provider.get_full_text(self.work)
+        eq_('BLEH', text)
         eq_(DataSource.UNGLUE_IT, data_source.name)
 
         # When text isn't readily available, content comes from the EPUB.
         html_rep.resource.representation = None
-        text, data_source = self.provider.get_full_text(self.edition)
+        text, data_source = self.provider.get_full_text(self.work)
         eq_(True, 'Dostoyevsky' in text)
         eq_(DataSource.FEEDBOOKS, data_source.name)
 
