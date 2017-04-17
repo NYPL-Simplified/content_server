@@ -356,7 +356,7 @@ class BibblioCoverageProvider(CoverageProvider):
         for filename in text_filenames:
             with zip_file.open(filename) as text_file:
                 raw_text = cls._html_to_text(text_file.read())
-                accumulated_text += raw_text
+                accumulated_text += (raw_text + '\n')
 
         return cls._shrink_text(accumulated_text)
 
