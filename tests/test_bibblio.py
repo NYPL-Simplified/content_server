@@ -11,7 +11,7 @@ from . import (
 
 from ..core.coverage import (
     CoverageFailure,
-    CoverageRecord,
+    WorkCoverageRecord,
 )
 from ..core.model import (
     DataSource,
@@ -127,15 +127,13 @@ class TestBibblioCoverageProvider(DatabaseTest):
     def setup(self):
         super(TestBibblioCoverageProvider, self).setup()
 
-        work = self._work(with_open_access_download=True, fiction=False)
         self.edition, _lp = self._edition(
             with_open_access_download=True,
             data_source_name=BibblioCoverageProvider.INSTANT_CLASSICS_SOURCES[0]
         )
         self.identifier = self.edition.primary_identifier
-
         # Create a work for fiction/nonfiction status.
-        work = self._work(presentation_edition=self.edition, fiction=False)
+        self.work = self._work(presentation_edition=self.edition, fiction=False)
 
         self.custom_list, _ = self._customlist(
             foreign_identifier=u'fake-list', name=u'Fake List',
@@ -173,62 +171,68 @@ class TestBibblioCoverageProvider(DatabaseTest):
 
     def test_items_that_need_coverage(self):
         # Use a random acceptable DataSource type.
-        num_data_sources = len(BibblioCoverageProvider.INSTANT_CLASSICS_SOURCES)
-        source = BibblioCoverageProvider.INSTANT_CLASSICS_SOURCES[choice(range(0,num_data_sources))]
+        end = len(self.provider.INSTANT_CLASSICS_SOURCES)
+        source_name = self.provider.INSTANT_CLASSICS_SOURCES[choice(range(0,end))]
+        source = DataSource.lookup(self._db, source_name)
 
-        # Create a nonfiction edition is not in the CustomList.
-        listless_edition, _lp = self._edition(
-            with_open_access_download=True, data_source_name=source)
-        work = self._work(presentation_edition=listless_edition, fiction=False)
+        # Create a nonfiction work that is not in the CustomList.
+        listless = self._work(with_open_access_download=True, fiction=False)
 
-        # Create a nonfiction edition that already has coverage.
-        covered_edition, _lp = self._edition(
-            with_open_access_download=True, data_source_name=source)
+        # Create a nonfiction work that's in the CustomList, even though
+        # its Work isn't directly connected. (A CustomListEntry is not
+        # always linked with a Work, though it always has an edition.)
+        edition_listed = self._work(with_open_access_download=True, fiction=False)
+        entry, _is_new = self.custom_list.add_entry(edition_listed.presentation_edition)
+        entry.work = None
 
-        CoverageRecord.add_for(covered_edition, self.provider.output_source,
-            operation=self.provider.operation)
-        # A work is required to set the fiction status.
-        work = self._work(presentation_edition=covered_edition, fiction=False)
+        # Create a work that already has coverage.
+        covered = self._work(with_open_access_download=True, fiction=False)
+        WorkCoverageRecord.add_for(covered, operation=self.provider.operation)
 
-        # Create a fiction edition without coverage.
-        fiction_edition, _lp = self._edition(
-            with_open_access_download=True, data_source_name=source)
-        work = self._work(presentation_edition=fiction_edition)
+        # Create a fiction work without coverage.
+        fiction = self._work(with_open_access_download=True)
 
-        workless_edition, _lp = self._edition(
-            with_open_access_download=True, data_source_name=source)
+        # And here's a nonfiction work without coverage.
+        nonfiction = self.work
 
-        # Add the listed editions to the targeted CustomList.
-        self.custom_list.add_entry(covered_edition)
-        self.custom_list.add_entry(fiction_edition)
-        self.custom_list.add_entry(workless_edition)
+        for work in [covered, fiction, nonfiction]:
+            self.custom_list.add_entry(work.presentation_edition)
+
+        # Give all the works a target DataSource.
+        works = [listless, edition_listed, covered, fiction]
+        for work in works:
+            work.presentation_edition.data_source = source
+            [setattr(lp, 'data_source', source) for lp in work.license_pools]
 
         result = self.provider.items_that_need_coverage()
-
-        # An edition that's not in the list is not included in the result.
-        assert listless_edition.primary_identifier not in result
-        # An edition without a Work isn't included either.
-        assert workless_edition.primary_identifier not in result
-        # An edition that's already covered is not in the list.
-        assert covered_edition.primary_identifier not in result
+        # A Work that's not in the list is not included in the result.
+        assert listless not in result
+        # Unless its presentation_edition is in the list!
+        assert edition_listed in result
+        # A Work that's already covered is not included.
+        assert covered not in result
         # By default, fiction is not included in the result.
-        assert fiction_edition.primary_identifier not in result
-        # An edition that's not covered is returned.
-        assert self.edition.primary_identifier in result
+        assert fiction not in result
+        # A nonfiction Work that's not covered is included in the result.
+        assert nonfiction in result
 
         # When fiction is being included, the fiction edition is included.
         self.provider.fiction = True
         result = self.provider.items_that_need_coverage()
-        assert fiction_edition.primary_identifier in result
-        assert self.edition.primary_identifier in result
+        assert fiction in result
+        assert nonfiction in result
+        assert edition_listed in result
         # But other ignored editions are still ignored.
-        assert listless_edition.primary_identifier not in result
-        assert workless_edition.primary_identifier not in result
-        assert covered_edition.primary_identifier not in result
+        assert listless not in result
+        assert covered not in result
 
     def test_process_item(self):
         representation = self.identifier.links[0].resource.representation
         representation.content = self.sample_file('180.epub')
+
+        source = DataSource.lookup(self._db, DataSource.OVERDRIVE)
+        other_identifier = self._identifier(identifier_type=Identifier.OVERDRIVE_ID)
+        self.identifier.equivalent_to(source, other_identifier, 1)
 
         def process_item(item):
             with temp_config() as config:
@@ -237,16 +241,23 @@ class TestBibblioCoverageProvider(DatabaseTest):
                 }
                 return self.provider.process_item(item)
 
-        result = process_item(self.identifier)
-        eq_(self.identifier, result)
+        result = process_item(self.work)
+        eq_(self.work, result)
 
-        # An equivalent identifier has been created.
-        [equivalency] = self.identifier.equivalencies
+        # An equivalent identifier has been created for the original identifier.
+        [equivalency] = [eq for eq in self.identifier.equivalencies
+                         if eq.data_source == self.provider.output_source]
         eq_(1.0, equivalency.strength)
-
         bibblio_id = equivalency.output
         eq_(Identifier.BIBBLIO_CONTENT_ITEM_ID, bibblio_id.type)
         eq_('510b1ee0-bede-4e24-a379-6a387f2dbb64', bibblio_id.identifier)
+
+        # Because its equivalent to Work's original identifier, the
+        # Overdrive identifier is also given an equivalency to the new
+        # Bibblio content item identifier.
+        [equivalency] = other_identifier.equivalencies
+        eq_(1.0, equivalency.strength)
+        eq_(bibblio_id, equivalency.output)
 
         def assert_is_coverage_failure_for(result, item, data_source, transient=True):
             eq_(True, isinstance(result, CoverageFailure))
@@ -257,10 +268,10 @@ class TestBibblioCoverageProvider(DatabaseTest):
         # When the API raises an error, a CoverageFailure is returned.
         self.provider.api.error = BadResponseException(
             'fake-bibblio.org', 'Got a bad 401')
-        result = process_item(self.identifier)
+        result = process_item(self.work)
 
         assert_is_coverage_failure_for(
-            result, self.identifier, self.provider.output_source
+            result, self.work, self.provider.output_source
         )
         assert 'fake-bibblio.org' in result.exception
         assert '401' in result.exception
@@ -268,30 +279,13 @@ class TestBibblioCoverageProvider(DatabaseTest):
         # In fact, when any error is raised, an appropriate
         # CoverageFailure is returned.
         self.provider.api.error = ValueError("B A N A N A S")
-        result = process_item(self.identifier)
+        result = process_item(self.work)
         assert_is_coverage_failure_for(
-            result, self.identifier, self.provider.output_source
+            result, self.work, self.provider.output_source
         )
         eq_("B A N A N A S", result.exception)
 
-    def test_add_coverage_record_for(self):
-        source = DataSource.lookup(self._db, DataSource.OVERDRIVE)
-        other_identifier = self._identifier(identifier_type=Identifier.OVERDRIVE_ID)
-        self.identifier.equivalent_to(source, other_identifier, 1)
-
-        self.provider.add_coverage_record_for(self.identifier)
-
-        # The item itself has coverage.
-        [coverage_record] = [cr for cr in self.identifier.coverage_records
-                             if cr.data_source == self.provider.output_source]
-        eq_(CoverageRecord.SYNC_OPERATION, coverage_record.operation)
-
-        # And so does its equivalent item!
-        [other_record] = [cr for cr in other_identifier.coverage_records
-                             if cr.data_source == self.provider.output_source]
-        eq_(CoverageRecord.SYNC_OPERATION, other_record.operation)
-
-    def test_content_item_from_identifier(self):
+    def test_content_item_from_edition(self):
         self.add_representation(
             DataSource.PLYMPTON, Representation.EPUB_MEDIA_TYPE,
             self.sample_file('180.epub')
@@ -301,7 +295,7 @@ class TestBibblioCoverageProvider(DatabaseTest):
             config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
                 Configuration.URL : 'https://www.testing.code'
             }
-            result = self.provider.content_item_from_identifier(self.identifier)
+            result = self.provider.content_item_from_edition(self.edition)
 
         eq_(['name', 'provider', 'text', 'url'], sorted(result.keys()))
 

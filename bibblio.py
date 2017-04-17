@@ -7,12 +7,16 @@ from nose.tools import set_trace
 from urlparse import urlparse
 
 from bs4 import BeautifulSoup
-from sqlalchemy.orm import eagerload
+from sqlalchemy import or_
+from sqlalchemy.orm import (
+    aliased,
+    eagerload,
+)
 
 from core.coverage import (
     CoverageFailure,
-    CoverageProvider,
-    CoverageRecord,
+    WorkCoverageProvider,
+    WorkCoverageRecord,
 )
 from core.model import (
     Credential,
@@ -161,12 +165,12 @@ class BibblioAPI(object):
         return content_item
 
 
-class BibblioCoverageProvider(CoverageProvider):
+class BibblioCoverageProvider(WorkCoverageProvider):
 
     DATA_SOURCE_NAME = DataSource.BIBBLIO
     DEFAULT_BATCH_SIZE = 25
     SERVICE_NAME = 'Bibblio Coverage Provider'
-    OPERATION = CoverageRecord.SYNC_OPERATION
+    OPERATION = 'bibblio-export'
 
     INSTANT_CLASSICS_SOURCES = [
         DataSource.FEEDBOOKS,
@@ -182,10 +186,9 @@ class BibblioCoverageProvider(CoverageProvider):
 
     def __init__(self, _db, custom_list_identifier,
                  api=None, catalogue_identifier=None, fiction=False):
-        output_source = DataSource.lookup(_db, self.DATA_SOURCE_NAME)
         super(BibblioCoverageProvider, self).__init__(
-            self.SERVICE_NAME, [], output_source,
-            batch_size=self.DEFAULT_BATCH_SIZE, operation=self.OPERATION
+            _db, self.SERVICE_NAME, self.OPERATION,
+            batch_size=self.DEFAULT_BATCH_SIZE
         )
 
         self.custom_list = CustomList.find(
@@ -195,40 +198,45 @@ class BibblioCoverageProvider(CoverageProvider):
         self.api = api or BibblioAPI.from_config(self._db)
         self.catalogue_id = catalogue_identifier
 
-    def items_that_need_coverage(self, identifiers=None):
+    @property
+    def output_source(self):
+        return DataSource.lookup(self._db, self.DATA_SOURCE_NAME)
+
+    def items_that_need_coverage(self, identifiers=None, **kwargs):
+        qu = super(BibblioCoverageProvider, self).items_that_need_coverage(
+                identifiers=identifiers, **kwargs)
+
         data_sources = [DataSource.lookup(self._db, ds)
                         for ds in self.INSTANT_CLASSICS_SOURCES]
 
-        # Get any uncovered editions from approved sources.
-        edition_subquery = Edition.missing_coverage_from(
-            self._db, data_sources, self.output_source,
-            operation=self.operation).subquery()
-
         # Get any identifiers with uncovered editions in the targeted
         # CustomList and an associated Work to be recommended.
-        qu = self._db.query(Identifier)\
-            .join(Identifier.primarily_identifies).join(Edition.work)\
-            .join(Edition.custom_list_entries).join(CustomListEntry.customlist)\
-            .join(edition_subquery, Edition.id == edition_subquery.c.id)\
-            .filter(CustomList.id==self.custom_list.id)
+        edition_entry = aliased(CustomListEntry)
+        edition_list = aliased(CustomList)
+        qu = qu.join(Work.presentation_edition)\
+                .outerjoin(Work.custom_list_entries)\
+                .outerjoin(CustomListEntry.customlist)\
+                .outerjoin(edition_entry, Edition.custom_list_entries)\
+                .outerjoin(edition_list, edition_entry.customlist)\
+                .filter(or_(
+                    CustomList.id==self.custom_list.id,
+                    edition_list.id==self.custom_list.id))\
+                .options(eagerload(Work.presentation_edition)).distinct()
 
         if not self.fiction:
             # Only get nonfiction. This is the default setting.
             qu = qu.filter(Work.fiction==False)
 
-        if identifiers:
-            qu = qu.filter(Id.id.in_([i.id for i in identifiers]))
-
         return qu
 
-    def process_item(self, identifier, force=False):
-        content_item = self.content_item_from_identifier(identifier)
+    def process_item(self, work):
+        content_item = self.content_item_from_edition(work.presentation_edition)
 
         try:
             result = self.api.create_content_item(content_item)
         except Exception as e:
             return CoverageFailure(
-                identifier, str(e), data_source=self.output_source,
+                work, str(e), data_source=self.output_source,
                 transient=True
             )
 
@@ -237,29 +245,16 @@ class BibblioCoverageProvider(CoverageProvider):
             self._db, Identifier.BIBBLIO_CONTENT_ITEM_ID, content_item_id
         )
 
-        identifier.equivalent_to(
-            self.output_source, bibblio_identifier, 1
+        work_identifiers = self._db.query(Identifier).filter(
+            Identifier.id.in_(work.all_identifier_ids())
         )
-        return identifier
+        for identifier in work_identifiers:
+            identifier.equivalent_to(
+                self.output_source, bibblio_identifier, 1
+            )
+        return work
 
-    def add_coverage_record_for(self, item):
-        """Adds an appropriate CoverageRecord for this particular
-        identifier and any equivalent identifiers.
-
-        Because Bibblio is text-based recommendation source, it doesn't
-        make sense to represent the same work multiple times.
-        """
-        equivalent_identifier_ids = item.equivalent_identifier_ids()[item.id]
-
-        equivalent_identifiers = self._db.query(Identifier).filter(
-            Identifier.id.in_(equivalent_identifier_ids)
-        )
-        for identifier in equivalent_identifiers:
-            super(BibblioCoverageProvider, self).add_coverage_record_for(identifier)
-
-    def content_item_from_identifier(self, identifier):
-        edition = identifier.primarily_identifies[0]
-
+    def content_item_from_edition(self, edition):
         name = edition.title + ' by ' + edition.author
         url = self.edition_permalink(edition)
         text, data_source = self.get_full_text(edition)
