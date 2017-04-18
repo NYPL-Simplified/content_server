@@ -6,7 +6,10 @@ from nose.tools import (
 )
 from StringIO import StringIO
 from zipfile import ZipFile
-from . import DatabaseTest
+from . import (
+    DatabaseTest,
+    sample_data,
+)
 from ..feedbooks import (
     FeedbooksOPDSImporter,
     RehostingPolicy,
@@ -47,14 +50,9 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             self._db, self.importer.DATA_SOURCE_NAME, autocreate=True,
             offers_licenses=True
         )
-        
-        base_path = os.path.split(__file__)[0]
-        self.resource_path = os.path.join(base_path, "files", "feedbooks")
 
     def sample_file(self, filename):
-        path = os.path.join(self.resource_path, filename)
-        data = open(path).read()
-        return data
+        return sample_data(filename, "feedbooks")
 
     def test_extract_feed_data_improves_descriptions(self):
         feed = self.sample_file("feed.atom")
@@ -71,7 +69,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # long description from 677.atom.
         [description] = [x for x in value.links if x.rel==Hyperlink.DESCRIPTION]
         eq_(1818, len(description.content))
-        
+
     def test_improve_description(self):
         # Here's a Metadata that has a bad (truncated) description.
         metadata = Metadata(self.data_source)
@@ -82,7 +80,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             rel=Hyperlink.DESCRIPTION, media_type="text/plain",
             content="Don't look at me; I'm irrelevant!"
         )
-        
+
         # Sending an HTTP request to this URL is going to give a 404 error.
         alternate = LinkData(rel=Hyperlink.ALTERNATE, href="http://foo/",
                              media_type=OPDSFeed.ENTRY_TYPE)
@@ -91,7 +89,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # because it doesn't promise an OPDS entry.
         alternate2 = LinkData(rel=Hyperlink.ALTERNATE, href="http://bar/",
                              media_type="text/html")
-        
+
         # But this URL will give us full information about this
         # entry, including a better description.
         alternate3 = LinkData(
@@ -105,13 +103,13 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             rel=Hyperlink.ALTERNATE, href="http://qux/",
             media_type=OPDSFeed.ENTRY_TYPE
         )
-        
+
         # Two requests will be made. The first will result in a 404
         # error. The second will give us an OPDS entry.
         self.http.queue_response(200, OPDSFeed.ENTRY_TYPE,
                                  content=self.sample_file("677.atom"))
         self.http.queue_response(404, content="Not found")
-        
+
         metadata.links = [bad_description, irrelevant_description,
                           alternate, alternate2, alternate3, alternate4]
 
@@ -124,12 +122,12 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # also included a copy of it.
         assert bad_description not in metadata.links
         assert irrelevant_description not in metadata.links
-        
+
         # The more complete description from 677.atom has been added.
         [good_description] = [
             x for x in metadata.links if x.rel == Hyperlink.DESCRIPTION
         ]
-        
+
         # The four alternate links have not been touched.
         assert (alternate in metadata.links)
         assert (alternate2 in metadata.links)
@@ -158,7 +156,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         generic_links = [x for x in book.circulation.links
                          if x.rel==Hyperlink.GENERIC_OPDS_ACQUISITION]
         eq_([], generic_links)
-        
+
     def test_open_access_book_modified_and_mirrored(self):
         feed = self.sample_file("feed_with_open_access_book.atom")
         self.http.queue_response(
@@ -229,9 +227,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
             # The content of CSS files has been changed to the new value.
             with zip.open("OPS/css/about.css") as f:
                 eq_("Test CSS", f.read())
-        
-        
-        
+
     def test_in_copyright_book_not_mirrored(self):
 
         self.metadata.lookups = { u"René Descartes" : "Descartes, Rene" }
@@ -268,11 +264,11 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # URL' is the same as the original URL. This is not the best
         # outcome--it happens in Identifier.add_link--but it should be
         # okay.
-        
+
         eq_('http://www.feedbooks.com/book/677.epub',
             mechanism.resource.representation.mirror_url
         )
-        
+
         # The pool is not marked as open-access because although it
         # has open-access links, they're not licensed under terms we
         # can use.
@@ -280,7 +276,7 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
 
 
 class TestRehostingPolicy(object):
-    
+
     def test_rights_uri(self):
         # A Feedbooks work based on a text that is in copyright in the
         # US gets a RightsStatus of IN_COPYRIGHT.  We will not be
@@ -295,7 +291,7 @@ class TestRehostingPolicy(object):
             LIFE_PLUS_70, "gutenberg.net.au", None
         )
         eq_(RightsStatus.IN_COPYRIGHT, unknown_australia_publication)
-        
+
         # A Feedbooks work based on a text that is in the US public
         # domain is relicensed to us as CC-BY-NC.
         pd_in_us = RehostingPolicy.rights_uri(
@@ -319,8 +315,7 @@ class TestRehostingPolicy(object):
             RehostingPolicy.RIGHTS_UNKNOWN, "mywebsite.com", 2016
         )
         eq_(RightsStatus.UNKNOWN, unknown)
-        
-        
+
     def test_can_rehost_us(self):
         # We will rehost anything published prior to 1923.
         eq_(
@@ -349,7 +344,7 @@ class TestRehostingPolicy(object):
                     None, site, 2016
                 )
             )
-            
+
         # If none of these conditions are met we will not rehost a
         # book.
         eq_(

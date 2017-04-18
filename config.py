@@ -12,6 +12,10 @@ class Configuration(CoreConfiguration):
 
     S3_STATIC_FEED_BUCKET = "static_feed_bucket"
 
+    BIBBLIO_INTEGRATION = "Bibblio"
+    BIBBLIO_ID = "client_id"
+    BIBBLIO_SECRET = "client_secret"
+
     DEFAULT_ENABLED_FACETS = {
         Facets.ORDER_FACET_GROUP_NAME : [
             Facets.ORDER_AUTHOR, Facets.ORDER_TITLE, Facets.ORDER_ADDED_TO_COLLECTION

@@ -1,4 +1,5 @@
 # Requirements for core
+beautifulsoup4
 cairosvg==1.0.22
 elasticsearch
 feedparser
