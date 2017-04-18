@@ -237,10 +237,6 @@ class TestBibblioCoverageProvider(DatabaseTest):
         representation = self.identifier.links[0].resource.representation
         representation.content = self.sample_file('180.epub')
 
-        source = DataSource.lookup(self._db, DataSource.OVERDRIVE)
-        other_identifier = self._identifier(identifier_type=Identifier.OVERDRIVE_ID)
-        self.identifier.equivalent_to(source, other_identifier, 1)
-
         def process_item(item):
             with temp_config() as config:
                 config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
@@ -252,19 +248,12 @@ class TestBibblioCoverageProvider(DatabaseTest):
         eq_(self.work, result)
 
         # An equivalent identifier has been created for the original identifier.
-        [equivalency] = [eq for eq in self.identifier.equivalencies
-                         if eq.data_source == self.provider.output_source]
+        [equivalency] = self.identifier.equivalencies
         eq_(1.0, equivalency.strength)
+
         bibblio_id = equivalency.output
         eq_(Identifier.BIBBLIO_CONTENT_ITEM_ID, bibblio_id.type)
         eq_('510b1ee0-bede-4e24-a379-6a387f2dbb64', bibblio_id.identifier)
-
-        # Because its equivalent to Work's original identifier, the
-        # Overdrive identifier is also given an equivalency to the new
-        # Bibblio content item identifier.
-        [equivalency] = other_identifier.equivalencies
-        eq_(1.0, equivalency.strength)
-        eq_(bibblio_id, equivalency.output)
 
         def assert_is_coverage_failure_for(result, item, data_source, transient=True):
             eq_(True, isinstance(result, CoverageFailure))

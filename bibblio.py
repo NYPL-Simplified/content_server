@@ -249,13 +249,9 @@ class BibblioCoverageProvider(WorkCoverageProvider):
             self._db, Identifier.BIBBLIO_CONTENT_ITEM_ID, content_item_id
         )
 
-        work_identifiers = self._db.query(Identifier).filter(
-            Identifier.id.in_(work.all_identifier_ids())
-        )
-        for identifier in work_identifiers:
-            identifier.equivalent_to(
-                self.output_source, bibblio_identifier, 1
-            )
+        identifier = work.presentation_edition.primary_identifier
+        identifier.equivalent_to(self.output_source, bibblio_identifier, 1)
+
         return work
 
     def content_item_from_work(self, work):
