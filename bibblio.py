@@ -7,6 +7,8 @@ from nose.tools import set_trace
 from urlparse import urlparse
 
 from bs4 import BeautifulSoup
+from flask import url_for
+
 from sqlalchemy import or_
 from sqlalchemy.orm import (
     aliased,
@@ -35,7 +37,6 @@ from core.model import (
 from core.util.epub import EpubAccessor
 from core.util.http import HTTP
 
-from flask import url_for
 from config import Configuration
 
 
@@ -275,6 +276,8 @@ class BibblioCoverageProvider(WorkCoverageProvider):
 
     @classmethod
     def edition_permalink(cls, edition):
+        """Gets a unique URL for the target Work"""
+
         base_url = Configuration.integration_url(
             Configuration.CONTENT_SERVER_INTEGRATION, required=True
         )
@@ -282,13 +285,12 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         base_url = '://'.join([scheme, host])
 
         urn = edition.primary_identifier.urn
-        permalink = None
         initialization_value = os.environ.get('AUTOINITIALIZE')
         try:
             os.environ['AUTOINITIALIZE'] = 'False'
             from app import app
-            with app.test_request_context(base_url):
-                permalink = base_url + url_for('lookup', urn=urn)
+            with app.test_request_context(base_url=base_url):
+                permalink = url_for('lookup', urn=urn, _external=True)
 
         finally:
             os.unsetenv('AUTOINITIALIZE')
