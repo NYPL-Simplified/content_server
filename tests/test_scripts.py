@@ -278,7 +278,7 @@ class TestCustomListUploadScript(DatabaseTest):
         works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in works]))
         self.script.edit_list(custom_list, works_qu, 'replace', [other_identifier])
         eq_(5, len(custom_list.entries))
-        [entry] = custom_list.entries_for_work(other_work)
+        [entry] = list(custom_list.entries_for_work(other_work))
         # Also, works that are requested to be featured, are featured.
         eq_(True, entry.featured)
 
@@ -286,7 +286,7 @@ class TestCustomListUploadScript(DatabaseTest):
         works_qu = self._db.query(Work).filter(Work.id.in_([w.id for w in sample_works]))
         self.script.edit_list(custom_list, works_qu, 'remove', [])
         eq_(1, len(custom_list.entries))
-        assert custom_list.entries_for_work(other_work)
+        assert list(custom_list.entries_for_work(other_work))
 
     def test_run(self):
         works, works_by_urn, _f = self._create_works_from_csv('youth.csv')
@@ -303,12 +303,12 @@ class TestCustomListUploadScript(DatabaseTest):
         # Only the youth works are in the youth list.
         eq_(2, len(youth_list.entries))
         for urn in youth_urns:
-            eq_(1, len(youth_list.entries_for_work(works_by_urn[urn])))
+            eq_(1, len(list(youth_list.entries_for_work(works_by_urn[urn]))))
 
         # All of the works are in the full list.
         eq_(7, len(full_list.entries))
         for urn, work in works_by_urn.items():
-            eq_(1, len(full_list.entries_for_work(work)))
+            eq_(1, len(list(full_list.entries_for_work(work))))
 
 
 @contextlib.contextmanager

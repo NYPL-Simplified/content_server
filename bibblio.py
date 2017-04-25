@@ -201,9 +201,10 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         )
 
         self.fiction = fiction
-        if languages and not isinstance(languages, list):
-            languages = [languages]
-        self.languages = [unicode(l) for l in languages] or []
+        self.languages = languages or []
+        if not isinstance(self.languages, list):
+            self.languages = [languages]
+        self.languages = [unicode(l) for l in self.languages]
 
         self.api = api or BibblioAPI.from_config(self._db)
         self.catalogue_id = catalogue_identifier
