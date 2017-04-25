@@ -1,0 +1,34 @@
+#!/usr/bin/env python
+"""Export certain works to Bibblio as Bibblio ContentItems"""
+import argparse
+import os
+import sys
+from nose.tools import set_trace
+
+bin_dir = os.path.split(__file__)[0]
+package_dir = os.path.join(bin_dir, "..", "..")
+sys.path.append(os.path.abspath(package_dir))
+
+from core.model import production_session
+from bibblio import BibblioCoverageProvider
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    'custom_list_identifier', help='Export Works from this CustomList'
+)
+parser.add_argument(
+    'catalogue_identifier', help='Export Works into this Bibblio catalogue'
+)
+parser.add_argument(
+    '--languages', nargs='?', default='eng',
+    help='Look for Works in these languages'
+)
+
+parsed = parser.parse_args()
+
+_db = production_session()
+BibblioCoverageProvider(
+    _db, parsed.custom_list_identifier,
+    languages=parsed.languages,
+    catalogue_identifier=parsed.catalogue_identifier
+).run()
