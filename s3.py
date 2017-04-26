@@ -67,6 +67,10 @@ class S3Uploader(BaseS3Uploader):
                 url = representation.mirror_url
                 resource = representation.resource
                 logging.info('Deleting %s...', url)
+
+                _db.delete(representation)
+                logging.info("\t- DELETED Representation %r", representation)
+
                 if resource:
                     count = len(resource.links)
                     [_db.delete(link) for link in resource.links]
@@ -74,9 +78,6 @@ class S3Uploader(BaseS3Uploader):
 
                     _db.delete(resource)
                     logging.info("\t- DELETED Resource %r", resource)
-
-                _db.delete(representation)
-                logging.info("\t- DELETED Representation %r", representation)
 
         for key in keys:
             bucket, key = self.bucket_and_filename(key)
