@@ -197,14 +197,13 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         )
 
         self.custom_list = CustomList.find(
-            self._db, DataSource.LIBRARY_STAFF, unicode(custom_list_identifier)
+            self._db, DataSource.LIBRARY_STAFF, custom_list_identifier
         )
 
         self.fiction = fiction
         self.languages = languages or []
         if not isinstance(self.languages, list):
             self.languages = [languages]
-        self.languages = [unicode(l) for l in self.languages]
 
         self.api = api or BibblioAPI.from_config(self._db)
         self.catalogue_id = catalogue_identifier
