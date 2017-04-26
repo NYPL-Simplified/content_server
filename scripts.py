@@ -890,12 +890,17 @@ class CustomListUploadScript(StaticFeedScript):
 
         if save_option in self.ADD_OPTIONS:
             # We're just adding to what's there. No need to get fancy.
+            self.log.info("Adding %d editions to %r", len(input_editions), custom_list)
             input_editions = self.editions_with_featured_status(
                 input_editions, featured_identifiers
             )
             [custom_list.add_entry(e, featured=f) for e, f in input_editions]
 
         if save_option == 'remove':
+            self.log.info(
+                "Removing %d editions from %r",
+                len(input_editions), custom_list
+            )
             [custom_list.remove_entry(e) for e in input_editions]
 
         if save_option == 'replace':
@@ -906,8 +911,16 @@ class CustomListUploadScript(StaticFeedScript):
             overwritten_editions = self._confirm_removal(
                 custom_list, overwritten_editions, input_editions
             )
+
+            self.log.info(
+                "Removing %d editions from %r",
+                len(overwritten_editions), custom_list
+            )
             [custom_list.remove_entry(e) for e in overwritten_editions]
 
+            self.log.info(
+                "Adding %d editions to %r", len(input_editions), custom_list
+            )
             input_editions = self.editions_with_featured_status(
                 input_editions, featured_identifiers
             )

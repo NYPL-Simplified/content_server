@@ -189,16 +189,22 @@ class BibblioCoverageProvider(WorkCoverageProvider):
     ]
 
     def __init__(self, _db, custom_list_identifier,
-                 api=None, catalogue_identifier=None, fiction=False):
+                 api=None, fiction=False, languages=None,
+                 catalogue_identifier=None, **kwargs):
         super(BibblioCoverageProvider, self).__init__(
             _db, self.SERVICE_NAME, self.OPERATION,
-            batch_size=self.DEFAULT_BATCH_SIZE
+            batch_size=self.DEFAULT_BATCH_SIZE, **kwargs
         )
 
         self.custom_list = CustomList.find(
             self._db, DataSource.LIBRARY_STAFF, custom_list_identifier
         )
+
         self.fiction = fiction
+        self.languages = languages or []
+        if not isinstance(self.languages, list):
+            self.languages = [languages]
+
         self.api = api or BibblioAPI.from_config(self._db)
         self.catalogue_id = catalogue_identifier
 
@@ -231,12 +237,15 @@ class BibblioCoverageProvider(WorkCoverageProvider):
             # Only get nonfiction. This is the default setting.
             qu = qu.filter(Work.fiction==False)
 
+        if self.languages:
+            # We only want a particular language.
+            qu = qu.filter(Edition.language.in_(self.languages))
+
         return qu
 
     def process_item(self, work):
-        content_item = self.content_item_from_work(work)
-
         try:
+            content_item = self.content_item_from_work(work)
             result = self.api.create_content_item(content_item)
         except Exception as e:
             return CoverageFailure(
