@@ -27,6 +27,9 @@ class TestAnnotator(DatabaseTest):
 
     def test_unfulfillable_work_raises_exception(self):
         work = self._work(with_license_pool=True)
+        [lp] = work.license_pools
+        lp.open_access = True
+
         # This work has a LicensePool but no licenses and no
         # open-access downloads. The ContentServerAnnotator will raise
         # UnfulfillableWork when asked to annotate a feed for this
