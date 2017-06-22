@@ -21,6 +21,7 @@ from ..core.lane import (
     Pagination,
 )
 from ..core.model import (
+    ConfigurationSetting,
     CustomList,
     DataSource,
     Edition,
@@ -238,11 +239,11 @@ class TestCustomListUploadScript(DatabaseTest):
             eq_(2, entries.count('thumbnail.jpg'))
         self._db.commit()
 
-        with temp_config() as config:
-            config[Configuration.POLICIES] = {
-                Configuration.MINIMUM_FEATURED_QUALITY : 0.90
-            }
-            works_qu, youth_qu, featured = self.script.works_from_source(filename)
+        # Set a higher minimum quality.
+        ConfigurationSetting.for_library(
+            Configuration.MINIMUM_FEATURED_QUALITY, self._default_library
+        ).value = unicode(0.90)
+        works_qu, youth_qu, featured = self.script.works_from_source(filename)
 
         eq_(2, works_qu.count())
         hidden_work = works_by_urn['urn:isbn:9781682280027']
@@ -293,7 +294,7 @@ class TestCustomListUploadScript(DatabaseTest):
         youth_urns = ['urn:isbn:9781682280010', 'urn:isbn:9781682280027']
 
         cmd_args = ['tests/files/scripts/youth.csv', 'Test Lane', '-n']
-        self.script.run(cmd_args=cmd_args)
+        self.script.do_run(cmd_args=cmd_args)
 
         # Two CustomLists were created.
         lists = self._db.query(CustomList).all()
@@ -324,6 +325,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
     def setup(self):
         super(TestStaticFeedGenerationScript, self).setup()
+        self.library = self._default_library
         self.uploader = DummyS3Uploader()
         self.script = StaticFeedGenerationScript(_db=self._db)
 
@@ -337,7 +339,7 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             identifier = work.license_pools[0].identifier
             identifiers.append(identifier)
         lane = StaticFeedBaseLane(
-            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+            self.library, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
         annotator = StaticFeedAnnotator('https://mta.librarysimplified.org')
 
@@ -369,9 +371,12 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
         pagination = Pagination(size=1)
         lane = StaticFeedBaseLane(
-            self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+            self.library, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
-        facet = Facets('main', 'always', 'author')
+        facet = Facets(
+            None, 'main', 'always', 'author',
+            enabled_facets=self.script.DEFAULT_ENABLED_FACETS
+        )
         annotator = StaticFeedAnnotator('https://ls.org', lane)
 
         result = self.script.create_feed_pages(
@@ -421,7 +426,7 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
 
         # If the feed configuration file is empty, an error is raised.
         test_file = 'tests/files/scripts/empty.json'
-        cmd_args = ['a-list', test_file, 'https://ls.org']
+        cmd_args = ['a-list', test_file, 'https://ls.org', '--storage-bucket', 'test.feed.bucket']
         parser = self.script.arg_parser().parse_args(cmd_args)
         feed_config = self.script.get_json_config(test_file)
         assert_raises(
@@ -455,7 +460,8 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
 
         def assert_incomplete_error_raised(config_filename, args=None):
             test_file = 'tests/files/scripts/%s.json' % config_filename
-            cmd_args = ['a-list', test_file, 'https://ls.org']
+            cmd_args = ['a-list', test_file, 'https://ls.org',
+                        '--storage-bucket', 'test.feed.bucket']
             if args:
                 cmd_args += args
             parser = self.script.arg_parser().parse_args(cmd_args)
@@ -470,7 +476,6 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
 
         # Or if the S3 integration is included but incomplete.
         assert_incomplete_error_raised('no_s3_secret', ['-u'])
-        assert_incomplete_error_raised('no_static_feed_bucket', ['-u'])
 
         # Or if the Elasticsearch integration is included but incomplete.
         assert_incomplete_error_raised('no_elasticsearch_url')
@@ -518,11 +523,11 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
 
         cmd_args = [
             'a-list', 'tests/files/scripts/sample_config.json',
-            'http://ls.org', '-u'
+            'http://ls.org', '-u', '--storage-bucket', 'test.feed.bucket'
         ]
 
         with lower_lane_sample_size():
-            self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+            self.script.do_run(uploader=self.uploader, cmd_args=cmd_args)
 
         # All of the expected files have been uploaded.
         eq_(15, len(self.uploader.content))
@@ -540,7 +545,8 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
 
         feeds_by_filename = dict()
         for rep in self.uploader.uploaded:
-            filename = rep.mirror_url.replace(self.uploader.static_feed_root(), '')
+            static_feed_root = self.uploader.url('test.feed.bucket', '/')
+            filename = rep.mirror_url.replace(static_feed_root, '')
             filename = filename.replace('.xml', '')
             feeds_by_filename[filename] = feedparser.parse(rep.content)
 
@@ -594,6 +600,10 @@ class TestCSVFeedGenerationScript(DatabaseTest):
         self.uploader = DummyS3Uploader()
         self.script = CSVFeedGenerationScript(_db=self._db)
 
+    @property
+    def static_feed_root(self):
+        return self.uploader.url('test.feed.bucket', '/')
+
     def test_run_with_urns(self):
         not_requested = self._work(with_open_access_download=True)
         requested = self._work(with_open_access_download=True)
@@ -608,8 +618,9 @@ class TestCSVFeedGenerationScript(DatabaseTest):
         urn2 = suppressed.license_pools[0].identifier.urn
 
         cmd_args = ['fake.csv', 'mta.librarysimplified.org',
-                    '-u', '--urns', no_pool, urn1, urn2]
-        self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+                    '-u', '--urns', no_pool, urn1, urn2,
+                    '--storage-bucket', 'test.feed.bucket']
+        self.script.do_run(uploader=self.uploader, cmd_args=cmd_args)
 
         # Feeds are created and uploaded for the main feed and its facets.
         eq_(2, len(self.uploader.content))
@@ -644,8 +655,9 @@ class TestCSVFeedGenerationScript(DatabaseTest):
         urns = [work.license_pools[0].identifier.urn for work in [w1, w2]]
 
         cmd_args = ['fake.csv', 'http://ls.org', '--page-size', '1',
-                    '-u', '--urns', urns[0], urns[1]]
-        self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+                    '-u', '--urns', urns[0], urns[1],
+                    '--storage-bucket', 'test.feed.bucket']
+        self.script.do_run(uploader=self.uploader, cmd_args=cmd_args)
 
         eq_(4, len(self.uploader.uploaded))
 
@@ -653,7 +665,7 @@ class TestCSVFeedGenerationScript(DatabaseTest):
             'index.xml', 'index_2.xml', 'index_author.xml',
             'index_author_2.xml'
         ]
-        expected = [self.uploader.static_feed_root()+f for f in expected_filenames]
+        expected = [self.static_feed_root+f for f in expected_filenames]
         result = [rep.mirror_url for rep in self.uploader.uploaded]
         eq_(sorted(expected), sorted(result))
 
@@ -673,22 +685,24 @@ class TestCSVFeedGenerationScript(DatabaseTest):
         self._db.commit()
 
         url = 'https://ls.org'
-        cmd_args = ['tests/files/scripts/mini.csv', url, '-u']
+        cmd_args = ['tests/files/scripts/mini.csv', url, '-u',
+                    '--storage-bucket', 'test.feed.bucket']
         cmd_args += args
 
         with temp_config() as config:
             config[Configuration.POLICIES] = {
                 Configuration.FEATURED_LANE_SIZE : 4
             }
-            self.script.run(uploader=self.uploader, cmd_args=cmd_args)
+            self.script.do_run(uploader=self.uploader, cmd_args=cmd_args)
         return w1, w2, w3, w4
 
     def test_run_with_csv(self):
         # An incorrect CSV document raises a ValueError when there are
         # also no URNs present.
-        cmd_args = ['fake.csv', 'mta.librarysimplified.org', '-u']
+        cmd_args = ['fake.csv', 'mta.librarysimplified.org', '-u',
+                    '--storage-bucket', 'test.feed.bucket']
         assert_raises(
-            ValueError, self.script.run, uploader=self.uploader,
+            ValueError, self.script.do_run, uploader=self.uploader,
             cmd_args=cmd_args
         )
 
@@ -706,13 +720,13 @@ class TestCSVFeedGenerationScript(DatabaseTest):
         ]
 
         created = self._db.query(Representation.mirror_url).\
-            filter(Representation.mirror_url.like(self.uploader.static_feed_root()+'%')).\
+            filter(Representation.mirror_url.like(self.static_feed_root+'%')).\
             all()
         created_filenames = [os.path.split(f[0])[1] for f in created]
         eq_(sorted(expected_filenames), sorted(created_filenames))
 
         def get_feed(filename):
-            like_str = self.uploader.static_feed_root() + filename + '.xml'
+            like_str = self.static_feed_root + filename + '.xml'
             representation = self._db.query(Representation).\
                 filter(Representation.mirror_url.like(like_str)).one()
             if not representation:
@@ -769,7 +783,7 @@ class TestCSVFeedGenerationScript(DatabaseTest):
         prefix_args = ['--prefix', 'testing/']
         self.run_mini_csv(*prefix_args)
         representations = self._db.query(Representation).filter(
-            Representation.mirror_url.like(self.uploader.static_feed_root()+'%')
+            Representation.mirror_url.like(self.static_feed_root+'%')
         ).all()
 
         eq_(9, len(representations))
