@@ -1,7 +1,11 @@
 import json
 import re
 from datetime import datetime
-from nose.tools import eq_, set_trace
+from nose.tools import (
+    assert_raises,
+    eq_,
+    set_trace,
+)
 from random import choice
 from urllib import quote
 
@@ -15,10 +19,13 @@ from ..core.coverage import (
     WorkCoverageRecord,
 )
 from ..core.model import (
+    ConfigurationSetting,
     DataSource,
     DeliveryMechanism,
+    ExternalIntegration,
     Hyperlink,
     Identifier,
+    LicensePoolDeliveryMechanism,
     Representation,
     RightsStatus,
 )
@@ -26,8 +33,8 @@ from ..core.util.epub import EpubAccessor
 from ..core.util.http import BadResponseException
 
 from ..config import (
+    CannotLoadConfiguration,
     Configuration,
-    temp_config,
 )
 
 from ..bibblio import (
@@ -78,29 +85,32 @@ class MockBibblioAPI(object):
 class TestBibblioAPI(DatabaseTest):
 
     def test_from_config(self):
-        # When nothing has been configured, nothing is returned.
-        with temp_config() as config:
-            config['integrations'][Configuration.BIBBLIO_INTEGRATION] = {}
-            result = BibblioAPI.from_config(self._db)
-            eq_(None, result)
+        # When nothing has been configured, an error is raised.
+        assert_raises(
+            CannotLoadConfiguration, BibblioAPI.from_config, self._db
+        )
 
         # When there's only a partial configuration, None is returned.
-        with temp_config() as config:
-            config['integrations'][Configuration.BIBBLIO_INTEGRATION] = {
-                Configuration.BIBBLIO_ID : 'id'
-            }
-            result = BibblioAPI.from_config(self._db)
-            eq_(None, result)
+        integration = self._external_integration(
+            ExternalIntegration.BIBBLIO, goal=ExternalIntegration.METADATA_GOAL
+        )
+        integration.username = 'user'
+        assert_raises(
+            CannotLoadConfiguration, BibblioAPI.from_config, self._db
+        )
 
-        with temp_config() as config:
-            config['integrations'][Configuration.BIBBLIO_INTEGRATION] = {
-                Configuration.BIBBLIO_ID : 'id',
-                Configuration.BIBBLIO_SECRET : 'secret'
-            }
-            result = BibblioAPI.from_config(self._db)
-            eq_(True, isinstance(result, BibblioAPI))
-            eq_('id', result.client_id)
-            eq_('secret', result.client_secret)
+        integration.username = None
+        integration.password = 'pass'
+        assert_raises(
+            CannotLoadConfiguration, BibblioAPI.from_config, self._db
+        )
+
+        # A full configuration, the API is created.
+        integration.username = 'user'
+        result = BibblioAPI.from_config(self._db)
+        eq_(True, isinstance(result, BibblioAPI))
+        eq_('user', result.client_id)
+        eq_('pass', result.client_secret)
 
     def test_timestamp(self):
         item = {'name' : 'banana'}
@@ -130,6 +140,10 @@ class TestBibblioCoverageProvider(DatabaseTest):
     def setup(self):
         super(TestBibblioCoverageProvider, self).setup()
 
+        self.base_url_setting = ConfigurationSetting.sitewide(
+            self._db, Configuration.BASE_URL_KEY)
+        self.base_url_setting.value = u'https://www.testing.code'
+
         self.edition, _lp = self._edition(
             with_open_access_download=True,
             data_source_name=BibblioCoverageProvider.INSTANT_CLASSICS_SOURCES[0]
@@ -155,24 +169,19 @@ class TestBibblioCoverageProvider(DatabaseTest):
                            identifier=None):
         """Utility method to add representations to the local identifier"""
         identifier = identifier or self.identifier
-        pool = identifier.licensed_through
+        [pool] = identifier.licensed_through
         url = self._url + '/' + media_type
         source = DataSource.lookup(self._db, source_name)
 
         link, _ = identifier.add_link(
-            Hyperlink.OPEN_ACCESS_DOWNLOAD, url, source, pool
+            Hyperlink.OPEN_ACCESS_DOWNLOAD, url, source,
+            media_type=media_type, content=content,
         )
 
-        representation, _ = self._representation(
-            url, media_type, content, mirrored=True
-        )
-
-        link.resource.data_source = source
-        link.resource.representation = representation
-        pool.set_delivery_mechanism(
-            media_type, DeliveryMechanism.NO_DRM,
-            RightsStatus.GENERIC_OPEN_ACCESS,
-            link.resource,
+        representation = link.resource.representation
+        LicensePoolDeliveryMechanism.set(
+            source, identifier, media_type, DeliveryMechanism.NO_DRM,
+            RightsStatus.GENERIC_OPEN_ACCESS, resource=link.resource
         )
         return representation
 
@@ -237,14 +246,7 @@ class TestBibblioCoverageProvider(DatabaseTest):
         representation = self.identifier.links[0].resource.representation
         representation.content = self.sample_file('180.epub')
 
-        def process_item(item):
-            with temp_config() as config:
-                config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
-                    Configuration.URL : 'https://www.testing.code'
-                }
-                return self.provider.process_item(item)
-
-        result = process_item(self.work)
+        result = self.provider.process_item(self.work)
         eq_(self.work, result)
 
         # An equivalent identifier has been created for the original identifier.
@@ -264,10 +266,10 @@ class TestBibblioCoverageProvider(DatabaseTest):
         # When the API raises an error, a CoverageFailure is returned.
         self.provider.api.error = BadResponseException(
             'fake-bibblio.org', 'Got a bad 401')
-        result = process_item(self.work)
+        result = self.provider.process_item(self.work)
 
         assert_is_coverage_failure_for(
-            result, self.work, self.provider.output_source
+            result, self.work, self.provider.data_source
         )
         assert 'fake-bibblio.org' in result.exception
         assert '401' in result.exception
@@ -275,9 +277,9 @@ class TestBibblioCoverageProvider(DatabaseTest):
         # In fact, when any error is raised, an appropriate
         # CoverageFailure is returned.
         self.provider.api.error = ValueError("B A N A N A S")
-        result = process_item(self.work)
+        result = self.provider.process_item(self.work)
         assert_is_coverage_failure_for(
-            result, self.work, self.provider.output_source
+            result, self.work, self.provider.data_source
         )
         eq_("B A N A N A S", result.exception)
 
@@ -286,12 +288,7 @@ class TestBibblioCoverageProvider(DatabaseTest):
             DataSource.PLYMPTON, Representation.EPUB_MEDIA_TYPE,
             self.sample_file('180.epub')
         )
-
-        with temp_config() as config:
-            config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
-                Configuration.URL : 'https://www.testing.code'
-            }
-            result = self.provider.content_item_from_work(self.work)
+        result = self.provider.content_item_from_work(self.work)
 
         eq_(['name', 'provider', 'text', 'url'], sorted(result.keys()))
         eq_('%s by %s' % (self.edition.title, self.edition.author), result.get('name'))
@@ -303,18 +300,13 @@ class TestBibblioCoverageProvider(DatabaseTest):
 
     def test_edition_permalink(self):
         urn = quote(self.identifier.urn).replace('/', '%2F')
-        with temp_config() as config:
-            config[Configuration.INTEGRATIONS][Configuration.CONTENT_SERVER_INTEGRATION] = {
-                Configuration.URL : 'https://www.testing.code'
-            }
-
-            result = BibblioCoverageProvider.edition_permalink(self.edition)
-
+        result = self.provider.edition_permalink(self.edition)
         expected = 'https://www.testing.code/lookup?urn=%s' % urn
         eq_(expected, result)
 
     def test_get_full_text_uses_easiest_representation(self):
         epub_content = self.sample_file('180.epub')
+
         epub_rep = self.add_representation(
             DataSource.FEEDBOOKS, Representation.EPUB_MEDIA_TYPE, epub_content
         )

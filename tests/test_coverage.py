@@ -28,7 +28,9 @@ class DummyEPUBCoverageProvider(GutenbergEPUBCoverageProvider):
 
     def epub_path_for(self, identifier):
         if identifier.identifier.startswith('fail'):
-            return CoverageFailure(identifier, "failure!", self.output_source, True)
+            return CoverageFailure(
+                identifier, "failure!", self.data_source, True
+            )
         return "/oh/you/want/%s.epub" % identifier.identifier
 
 
@@ -37,12 +39,13 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
     def setup(self):
         super(TestGutenbergEPUBCoverageProvider, self).setup()
         self.provider = DummyEPUBCoverageProvider(
-            self._db, mirror_uploader=DummyS3Uploader)
+            self._db, uploader=DummyS3Uploader()
+        )
 
     def test_can_instantiate_from_script(self):
         script = RunCoverageProviderScript(
-            DummyEPUBCoverageProvider, self._db, [], 
-            mirror_uploader=DummyS3Uploader
+            DummyEPUBCoverageProvider, self._db, [],
+            uploader=DummyS3Uploader()
         )
         assert isinstance(script.provider, DummyEPUBCoverageProvider)
 
@@ -50,7 +53,7 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         edition, pool = self._edition(with_license_pool=True)
         # Set aside the default delivery mechanism that got associated with
         # the license pool.
-        [lpm1] = pool.delivery_mechanisms
+        [lpm1] = edition.primary_identifier.delivery_mechanisms
 
         now = datetime.datetime.now()
         identifier = edition.primary_identifier
@@ -66,12 +69,11 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         # The edition has now been linked to a resource.
         [link] = edition.primary_identifier.links
         eq_(identifier, link.identifier)
-        eq_(edition.license_pool, link.license_pool)
         eq_(Hyperlink.OPEN_ACCESS_DOWNLOAD, link.rel)
-        eq_(self.provider.output_source, link.data_source)
+        eq_(self.provider.data_source , link.data_source)
 
         # A new distribution mechanism has been added to the pool
-        [lpm] = [x for x in link.license_pool.delivery_mechanisms if x != lpm1]
+        [lpm] = [x for x in link.identifier.delivery_mechanisms if x != lpm1]
         mech = lpm.delivery_mechanism
         eq_(mech.content_type, Representation.EPUB_MEDIA_TYPE)
         eq_(mech.drm_scheme, DeliveryMechanism.NO_DRM)
@@ -86,7 +88,7 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
     def test_epub_path_for_wrong_identifier_type(self):
         identifier = self._identifier(Identifier.OVERDRIVE_ID)
         real_provider = GutenbergEPUBCoverageProvider(
-            self._db, mirror_uploader=DummyS3Uploader
+            self._db, uploader=DummyS3Uploader()
         )
         failure = real_provider.epub_path_for(identifier)
         assert isinstance(failure, CoverageFailure)
@@ -99,7 +101,7 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         with temp_config() as config:
             config['data_directory'] = tempfile.gettempdir()
             real_provider = GutenbergEPUBCoverageProvider(
-                self._db, mirror_uploader=DummyS3Uploader
+                self._db, uploader=DummyS3Uploader()
             )
             failure = real_provider.epub_path_for(identifier)
         assert isinstance(failure, CoverageFailure)
@@ -107,7 +109,9 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         assert failure.exception.endswith('does not exist!')
 
     def test_process_item_failure_wrong_medium(self):
-        edition, pool = self._edition(with_license_pool=True)
+        edition, pool = self._edition(
+            with_license_pool=True, data_source_name=self.provider.data_source.name
+        )
         edition.medium = Edition.VIDEO_MEDIUM
         failure = self.provider.process_item(edition.primary_identifier)
         eq_('Medium "Video" does not support EPUB', failure.exception)
