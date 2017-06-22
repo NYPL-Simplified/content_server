@@ -25,7 +25,7 @@ from ..core.app_server import (
 
 from ..core.model import (
     DataSource,
-    SessionManager
+    SessionManager,
 )
 
 from ..core.lane import(
@@ -47,7 +47,6 @@ class ControllerTest(DatabaseTest):
         from ..app import app
         del os.environ['AUTOINITIALIZE']
         self.app = app
-
         # Create two English books and a French book.
         self.english_1 = self._work(
             "Quite British", "John Bull", language="eng", fiction=True,
@@ -111,7 +110,7 @@ class TestFeedController(ControllerTest):
             annotator = ContentServerAnnotator()
             facets = load_facets_from_request(Configuration)
             pagination = load_pagination_from_request().next_page
-            lane = Lane(self._db, "test", license_source=license_source)
+            lane = Lane(self._default_library, "test", license_source=license_source)
             expect = annotator.feed_url(lane, facets, pagination)
             eq_(expect, next_url)
 

@@ -26,6 +26,7 @@ from core.app_server import (
 from core.model import (
     production_session,
     DataSource,
+    Library
 )
 from core.lane import (
     Lane,
@@ -45,15 +46,15 @@ class ContentServer(object):
         self.log = logging.getLogger("Content server web app")
 
         try:
-            self.config = Configuration.load()
+            self.config = Configuration.load(_db)
         except CannotLoadConfiguration, e:
             self.log.error("Could not load configuration file: %s" %e)
             sys.exit()
 
         if _db is None and not testing:
             _db = production_session()
+            Configuration.load(_db)
         self._db = _db
-
         self.testing = testing
 
         self.setup_controllers()
@@ -89,10 +90,13 @@ class OPDSFeedController(ContentServerController):
         else:
             lane_name = "All books"
             license_source=None
-        lane = Lane(self._db, lane_name, license_source=license_source)
-        
+
+        library = Library.instance(self._db)
+        lane = Lane(library, lane_name, license_source=license_source)
+
         url = url_for("feed", _external=True)
 
+        flask.request.library = library
         facets = load_facets_from_request(Configuration)
         if isinstance(facets, ProblemDetail):
             return facets
