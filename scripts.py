@@ -354,12 +354,12 @@ class StaticFeedScript(Script):
             suppressed_msg = superceded_msg = ''
 
             suppressed = filter(lambda lp: lp.suppressed, pools)
-            if suppressed:
-                suppressed_msg = license_pool_message + "suppressed"
-
             superceded = filter(lambda lp: lp.superceded, pools)
+            if suppressed:
+                suppressed_msg = (license_pool_message+"suppressed") % len(suppressed)
+
             if superceded:
-                superceded_msg = license_pool_message + "superceded"
+                superceded_msg = (license_pool_message+"superceded") % len(superceded)
 
             if suppressed and superceded:
                 message += suppressed_msg + ' and ' + superceded_msg + '.'
