@@ -25,6 +25,7 @@ from ..core.model import (
     CustomList,
     DataSource,
     Edition,
+    ExternalIntegration,
     Hyperlink,
     Identifier,
     LicensePool,
@@ -62,6 +63,15 @@ class TestStaticFeedCSVExportScript(DatabaseTest):
         scifi = self._work(with_open_access_download=True, genre='Science Fiction')
         short = self._work(with_open_access_download=True, genre='Short Stories')
         history = self._work(with_open_access_download=True, genre='History', fiction=False)
+
+        # Put them all in a Collection with an appropriate DataSource
+        # so we can find them.
+        feedbooks = self._collection(
+            protocol=ExternalIntegration.OPDS_IMPORT,
+            data_source_name=DataSource.FEEDBOOKS
+        )
+        for work in [romance, paranormal, scifi, short, history]:
+            work.license_pools[0].collection = feedbooks
 
         # When there are no categories, only basic work information is
         # listed for all of the works.

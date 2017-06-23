@@ -37,6 +37,7 @@ from core.metadata_layer import (
 from core.model import (
     Classification,
     Collection,
+    ConfigurationSetting,
     CustomList,
     DataSource,
     DeliveryMechanism,
@@ -514,9 +515,11 @@ class StaticFeedCSVExportScript(StaticFeedScript):
             .join(Work.license_pools)\
             .join(LicensePool.collection)\
             .join(ExternalIntegration, Collection.external_integration_id==ExternalIntegration.id)\
+            .join(ConfigurationSetting)\
             .join(LicensePool.identifier)\
             .join(Identifier.links)\
-            .join(Hyperlink.resource)
+            .join(Hyperlink.resource)\
+            .filter(ConfigurationSetting.key==Collection.DATA_SOURCE_NAME_SETTING)
 
     def do_run(self):
         parser = self.arg_parser().parse_args()
@@ -530,7 +533,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
         # Get all Works from the DataSources.
         works_qu = self.base_works_query.filter(
-            ExternalIntegration.protocol.in_(source_names),
+            ConfigurationSetting.value.in_(source_names),
             Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
             Resource.url.like(u'%.epub')
         )
@@ -1035,7 +1038,6 @@ class StaticFeedGenerationScript(StaticFeedScript):
         ]
     }
 
-    TEMPORARY_LIBRARY_SHORT_NAME = u'TEMP'
     __library = None
 
     @classmethod
