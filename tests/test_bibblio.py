@@ -173,16 +173,34 @@ class TestBibblioCoverageProvider(DatabaseTest):
         url = self._url + '/' + media_type
         source = DataSource.lookup(self._db, source_name)
 
-        link, _ = identifier.add_link(
-            Hyperlink.OPEN_ACCESS_DOWNLOAD, url, source,
-            media_type=media_type, content=content,
+        representation = None
+        links = filter(lambda l: (
+            l.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD and
+            l.resource.representation.media_type==media_type),
+            identifier.links
         )
+        if links:
+            # There's already an open access link with the proper media
+            # type. Just update its content.
+            link = links[0]
+            representation = link.resource.representation
+            representation.content = content
 
-        representation = link.resource.representation
-        LicensePoolDeliveryMechanism.set(
-            source, identifier, media_type, DeliveryMechanism.NO_DRM,
-            RightsStatus.GENERIC_OPEN_ACCESS, resource=link.resource
-        )
+            # And its data_sources.
+            representation.data_source = source
+            link.data_source = link.resource.data_source = source
+
+        if not representation:
+            link, _ = identifier.add_link(
+                Hyperlink.OPEN_ACCESS_DOWNLOAD, url, source,
+                media_type=media_type, content=content,
+            )
+            LicensePoolDeliveryMechanism.set(
+                source, identifier, media_type, DeliveryMechanism.NO_DRM,
+                RightsStatus.GENERIC_OPEN_ACCESS, resource=link.resource
+            )
+            representation = link.resource.representation
+
         return representation
 
     def test_items_that_need_coverage(self):
