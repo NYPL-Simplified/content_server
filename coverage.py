@@ -30,7 +30,7 @@ class GutenbergEPUBCoverageProvider(IdentifierCoverageProvider):
     uploading it.
     """
 
-    DATA_SOURCE_NAME = DataSource.GUTENBERG
+    DATA_SOURCE_NAME = DataSource.GUTENBERG_EPUB_GENERATOR
 
     SERVICE_NAME = DATA_SOURCE_NAME
 
@@ -94,6 +94,16 @@ class GutenbergEPUBCoverageProvider(IdentifierCoverageProvider):
             RightsStatus.GENERIC_OPEN_ACCESS, link.resource
         )
         return identifier
+
+    def edition(self, identifier):
+        """Finds or creates an edition with license-offering DataSource.GUTENBERG
+        instead of the class's local DataSource.GUTENBERG_EPUB_GENERATOR
+        """
+        edition, is_new = Edition.for_foreign_id(
+            self._db, DataSource.GUTENBERG,
+            identifier.type, identifier.identifier
+        )
+        return edition
 
     def epub_path_for(self, identifier):
         """Find the path to the best EPUB for the given identifier."""

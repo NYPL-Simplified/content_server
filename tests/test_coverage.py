@@ -109,9 +109,7 @@ class TestGutenbergEPUBCoverageProvider(DatabaseTest):
         assert failure.exception.endswith('does not exist!')
 
     def test_process_item_failure_wrong_medium(self):
-        edition, pool = self._edition(
-            with_license_pool=True, data_source_name=self.provider.data_source.name
-        )
+        edition, pool = self._edition(with_license_pool=True)
         edition.medium = Edition.VIDEO_MEDIUM
         failure = self.provider.process_item(edition.primary_identifier)
         eq_('Medium "Video" does not support EPUB', failure.exception)
