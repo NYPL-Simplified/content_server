@@ -18,7 +18,10 @@ from sqlalchemy.orm.exc import (
 )
 
 from core.classifier import Classifier
-from core.scripts import Script
+from core.scripts import (
+    Script,
+    OPDSImportScript as BaseOPDSImportScript,
+)
 from core.lane import (
     Facets,
     Lane,
@@ -266,6 +269,35 @@ class DirectoryImportScript(Script):
             work.set_presentation_ready()
             print "FINALIZED %s/%s/%s" % (work.title, work.author, work.sort_author)
             self._db.commit()
+
+
+class OPDSImportScript(BaseOPDSImportScript):
+
+    """An OPDSImportScript class that finds a collection based on its
+    DataSource instead of parsing the command line.
+    """
+
+    IMPORTER_CLASS = None
+
+    def __init__(self, importer_class, data_source_name, _db=None):
+        super(OPDSImportScript, self).__init__(_db=_db)
+
+        self.IMPORTER_CLASS = importer_class
+        self.collection, is_new = Collection.by_name_and_protocol(
+            self._db, data_source_name, ExternalIntegration.OPDS_IMPORT
+        )
+
+        if is_new:
+            self.collection.libraries.append(Library.instance(self._db))
+
+        if not self.collection.data_source:
+            self.collection.external_integration.set_setting(
+                Collection.DATA_SOURCE_NAME_SETTING, data_source_name
+            )
+
+    def do_run(self, cmd_args=None):
+        parsed = self.parse_command_line(self._db, cmd_args=cmd_args)
+        self.run_monitor(self.collection, force=parsed.force)
 
 
 class StaticFeedScript(Script):

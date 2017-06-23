@@ -6,51 +6,24 @@ import sys
 bin_dir = os.path.split(__file__)[0]
 package_dir = os.path.join(bin_dir, "..")
 sys.path.append(os.path.abspath(package_dir))
+
+from core.model import DataSource
+
 from config import Configuration
-from core.scripts import OPDSImportScript
+from scripts import OPDSImportScript
 from feedbooks import FeedbooksOPDSImporter
-from core.model import (
-    Collection,
-    DataSource,
-    ExternalIntegration,
-    Library,
-    production_session,
-)
 
+import_script = OPDSImportScript(FeedbooksOPDSImporter, DataSource.FEEDBOOKS)
+base_opds_url = collection.external_account_id
 
-_db = production_session()
-Configuration.load(_db)
-
-BASE_OPDS_URL = "http://www.feedbooks.com/books/recent.atom?lang=%s"
-collection, is_new = Collection.by_name_and_protocol(
-    _db, DataSource.FEEDBOOKS, ExternalIntegration.OPDS_IMPORT,
-)
-collection.external_account_id = BASE_OPDS_URL
-
-if is_new:
-    library = Library.instance(_db)
-    collection.libraries.append(library)
-
-if not collection.data_source:
-    collection.external_integration.set_setting(
-        Collection.DATA_SOURCE_NAME_SETTING, DataSource.FEEDBOOKS
-    )
-
-
-OPDSImportScript.IMPORTER_CLASS = FeedbooksOPDSImporter
-for language in ['en', 'es', 'fr', 'it', 'de']:
-    collection.external_account_id = collection.external_account_id % language
-    print ('*' * 30) + collection.external_account_id + ('*' * 30)
-    cmd_args = ['--collection', collection.name]
-
-    try:
-        OPDSImportScript(_db=_db).do_run(cmd_args=cmd_args)
-    except Exception as e:
-        collection.external_account_id = BASE_OPDS_URL
-        logging.error(
-            "Fatal exception while running script: %s", e,
-            exc_info=e
+try:
+    for language in ['en', 'es', 'fr', 'it', 'de']:
+        # Update the OPDS url and run the script for each language.
+        import_script.collection.external_account_id = (
+            collection.external_account_id + language
         )
-        raise e
-    _db.commit()
-    collection.external_account_id = BASE_OPDS_URL
+        print ('*' * 30) + collection.external_account_id + ('*' * 30)
+        import_script.run()
+        _db.commit()
+except Exception as e:
+    collection.external_account_id = base_opds_url

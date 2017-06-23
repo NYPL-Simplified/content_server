@@ -27,9 +27,6 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
     THIRTY_DAYS = datetime.timedelta(days=30)
 
     def __init__(self, _db, collection, new_css=None, *args, **kwargs):
-        """
-        :param data_source_name: Passed in by OPDSImportScript and ignored.
-        """
         kwargs['content_modifier'] = self.replace_css
 
         if new_css:

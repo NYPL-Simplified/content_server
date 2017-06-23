@@ -5,13 +5,14 @@ import sys
 bin_dir = os.path.split(__file__)[0]
 package_dir = os.path.join(bin_dir, "..")
 sys.path.append(os.path.abspath(package_dir))
-from core.scripts import OPDSImportScript
+
 from core.opds_import import OPDSImporterWithS3Mirror
 from core.model import DataSource
+
+from scripts import OPDSImportScript
 from unglueit import UnglueItImporter
+
 OPDSImportScript(
-    "https://unglue.it/api/opds/epub/",
-    DataSource.UNGLUE_IT,
     UnglueItImporter,
-    immediately_presentation_ready=True,
+    DataSource.UNGLUE_IT,
 ).run()
