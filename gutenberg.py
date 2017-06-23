@@ -87,7 +87,7 @@ class GutenbergAPI(object):
 
     def __init__(self, _db, data_directory):
         self._db = _db
-        self.collection = Collection.by_protocol(self._db, ExternalIntegration.GUTENBERG)
+        self.collection = Collection.by_protocol(self._db, ExternalIntegration.GUTENBERG).one()
         self.source = DataSource.lookup(self._db, DataSource.GUTENBERG)
         self.data_directory = data_directory
         self.catalog_path = os.path.join(self.data_directory, self.FILENAME)
