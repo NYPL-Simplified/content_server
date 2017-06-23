@@ -24,14 +24,12 @@ from core.util.http import HTTP
 
 class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
 
-    DATA_SOURCE_NAME = "FeedBooks"
     THIRTY_DAYS = datetime.timedelta(days=30)
 
-    def __init__(self, _db, data_source_name=None, new_css=None, *args, **kwargs):
+    def __init__(self, _db, collection, new_css=None, *args, **kwargs):
         """
         :param data_source_name: Passed in by OPDSImportScript and ignored.
         """
-        kwargs['data_source_offers_licenses'] = True
         kwargs['content_modifier'] = self.replace_css
 
         if new_css:
@@ -40,7 +38,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
             self.new_css = HTTP.get_with_timeout("http://www.daisy.org/z3986/2005/dtbook.2005.basic.css").content
 
         super(FeedbooksOPDSImporter, self).__init__(
-            _db, self.DATA_SOURCE_NAME, *args, **kwargs
+            _db, collection, **kwargs
         )
 
     def extract_feed_data(self, feed, feed_url=None):
