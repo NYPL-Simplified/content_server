@@ -518,6 +518,16 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
         eq_(dict(), enabled_facets)
 
     def test_run(self):
+        # If there's an uploader but no static_feed_bucket, raise an error.
+        incomplete_cmd_args = [
+            'a-list', 'tests/files/scripts/sample_config.json',
+            'http://ls.org', '-u'
+        ]
+        assert_raises(
+            ValueError, self.script.do_run, uploader=self.uploader,
+            cmd_args=incomplete_cmd_args
+        )
+
         romance = self._work(title="A", with_open_access_download=True, genre='Romance')
         gothic = self._work(title="B", with_open_access_download=True, genre='Gothic Romance')
         mystery = self._work(with_open_access_download=True, genre='Hard-Boiled Mystery')
@@ -531,10 +541,7 @@ class TestCustomListFeedGenerationScript(DatabaseTest):
         for work in works:
             self.custom_list.add_entry(work.presentation_edition)
 
-        cmd_args = [
-            'a-list', 'tests/files/scripts/sample_config.json',
-            'http://ls.org', '-u', '--storage-bucket', 'test.feed.bucket'
-        ]
+        cmd_args = incomplete_cmd_args + ['--storage-bucket', 'test.feed.bucket']
 
         with lower_lane_sample_size():
             self.script.do_run(uploader=self.uploader, cmd_args=cmd_args)
