@@ -284,21 +284,14 @@ class OPDSImportScript(BaseOPDSImportScript):
         super(OPDSImportScript, self).__init__(_db=_db)
 
         self.IMPORTER_CLASS = importer_class
-        self.collection, is_new = Collection.by_name_and_protocol(
-            self._db, data_source_name, ExternalIntegration.OPDS_IMPORT
-        )
 
-        if is_new:
-            self.collection.libraries.append(Library.instance(self._db))
-
-        if not self.collection.data_source:
-            self.collection.external_integration.set_setting(
-                Collection.DATA_SOURCE_NAME_SETTING, data_source_name
-            )
+        collections = Collection.by_datasource(self._db, data_source_name)
+        self.collections = collections.all()
 
     def do_run(self, cmd_args=None):
         parsed = self.parse_command_line(self._db, cmd_args=cmd_args)
-        self.run_monitor(self.collection, force=parsed.force)
+        for collection in self.collections:
+            self.run_monitor(collection, force=parsed.force)
 
 
 class StaticFeedScript(Script):

@@ -36,8 +36,8 @@ class UnglueItImporter(OPDSImporterWithS3Mirror):
                         )
         return Representation.simple_http_get(url, headers, **kwargs)
 
-    def __init__(self, _db, default_data_source, **kwargs):
+    def __init__(self, _db, collection, **kwargs):
         kwargs['http_get'] = self._check_for_gutenberg_first
         super(UnglueItImporter, self).__init__(
-            _db, default_data_source, **kwargs
+            _db, collection, **kwargs
         )
