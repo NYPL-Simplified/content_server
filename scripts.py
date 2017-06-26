@@ -1063,7 +1063,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
         """Provides a predictable library to use when creating static feeds"""
         library = self.__library
         if not library:
-            library = Library.instance(self._db)
+            library = self._db.query(Library).one()
             self.__library = library
         return library
 
