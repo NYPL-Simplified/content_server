@@ -7,23 +7,26 @@ bin_dir = os.path.split(__file__)[0]
 package_dir = os.path.join(bin_dir, "..")
 sys.path.append(os.path.abspath(package_dir))
 
-from core.model import DataSource
+from core.model import (
+    DataSource,
+    ExternalIntegration,
+    Collection,
+    ConfigurationSetting,
+)
 
-from config import Configuration
 from scripts import OPDSImportScript
 from feedbooks import FeedbooksOPDSImporter
 
-import_script = OPDSImportScript(FeedbooksOPDSImporter, DataSource.FEEDBOOKS)
-base_opds_url = collection.external_account_id
 
-try:
-    for language in ['en', 'es', 'fr', 'it', 'de']:
-        # Update the OPDS url and run the script for each language.
-        import_script.collection.external_account_id = (
-            collection.external_account_id + language
-        )
-        print ('*' * 30) + collection.external_account_id + ('*' * 30)
-        import_script.run()
-        _db.commit()
-except Exception as e:
-    collection.external_account_id = base_opds_url
+import_script = OPDSImportScript(FeedbooksOPDSImporter, DataSource.FEEDBOOKS)
+collections = import_script._db.query(Collection)\
+    .join(ExternalIntegration, Collection.external_integration_id==ExternalIntegration.id)\
+    .join(ExternalIntegration.settings)\
+    .filter(ConfigurationSetting.key==Collection.DATA_SOURCE_NAME_SETTING)\
+    .filter(ConfigurationSetting.value==DataSource.FEEDBOOKS)
+
+for collection in collections:
+    import_script.collection = collection
+    print ('*' * 30) + collection.name + ': ' + collection.external_account_id + ('*' * 30)
+    import_script.run()
+    import_script._db.commit()
