@@ -614,6 +614,10 @@ class TestCSVFeedGenerationScript(DatabaseTest):
 
     def setup(self):
         super(TestCSVFeedGenerationScript, self).setup()
+
+        # Instantiate a library.
+        self._default_library
+
         self.uploader = DummyS3Uploader()
         self.script = CSVFeedGenerationScript(_db=self._db)
 
