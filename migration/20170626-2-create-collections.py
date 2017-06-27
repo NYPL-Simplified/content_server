@@ -15,12 +15,17 @@ sys.path.append(os.path.abspath(package_dir))
 from core.model import (
     Collection,
     DataSource,
+    Edition,
     ExternalIntegration,
     Library,
+    LicensePool,
     get_one_or_create,
     production_session,
 )
-from core.util import LanguageCodes
+from core.util import (
+    fast_query_count,
+    LanguageCodes,
+)
 
 from scripts import (
     DirectoryImportScript,
@@ -65,5 +70,62 @@ try:
             DataSource.GUTENBERG, gutenberg))
 
     _db.commit()
+
+    # Alright, all the Collections have been created. Let's update the
+    # LicensePools now.
+    base_query = _db.query(LicensePool)#.filter(LicensePool.collection_id==None)
+
+    single_collection_sources = [
+        DataSource.PLYMPTON, DataSource.ELIB, DataSource.UNGLUE_IT,
+        DataSource.STANDARD_EBOOKS, DataSource.GUTENBERG
+    ]
+    for data_source_name in single_collection_sources:
+        # Get the Collection.
+        collection = Collection.by_datasource(_db, data_source_name).one()
+
+        # Find LicensePools with the matching DataSource.
+        source = DataSource.lookup(_db, data_source_name)
+        qu = base_query.filter(LicensePool.data_source==source)
+        qu.update({LicensePool.collection_id : collection.id})
+
+        logging.info('UPDATED: %d LicensePools given Collection %r' % (
+            int(fast_query_count(qu)), collection))
+        _db.commit()
+
+    # Now update the FeedBooks LicensePools, which have to take language
+    # into account.
+    feedbooks = DataSource.lookup(_db, DataSource.FEEDBOOKS)
+    base_query = _db.query(LicensePool.id)\
+        .filter(LicensePool.data_source==feedbooks)\
+        .join(LicensePool.presentation_edition)
+
+    for lang in ['en', 'es', 'fr', 'it', 'de']:
+        # Get the Collection for each language.
+        language = LanguageCodes.english_names.get(lang)[0]
+        name = FeedbooksOPDSImporter.BASE_COLLECTION_NAME + language
+        collection, ignore = Collection.by_name_and_protocol(
+            _db, name, ExternalIntegration.OPDS_IMPORT
+        )
+
+        # Find LicensePools with an Edition in that language.
+        edition_lang = LanguageCodes.two_to_three[lang]
+        lang_query = base_query.filter(Edition.language==edition_lang)
+        lang_query = lang_query.subquery()
+
+        # Give them the proper Collection.
+        qu = _db.query(LicensePool).filter(LicensePool.id.in_(lang_query))
+        qu.update(
+            {LicensePool.collection_id : collection.id},
+            synchronize_session='fetch'
+        )
+
+        logging.info('UPDATED: %d LicensePools given Collection %r' % (
+            int(fast_query_count(qu)), collection))
+        _db.commit()
+
 except Exception as e:
     _db.close()
+    logging.error(
+        "Fatal exception while running script: %s", e,
+        exc_info=e
+    )
