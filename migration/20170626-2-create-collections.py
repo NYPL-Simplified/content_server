@@ -63,8 +63,7 @@ try:
             Collection.DATA_SOURCE_NAME_SETTING, DataSource.GUTENBERG
         )
     if is_new:
-        library, ignore = get_one_or_create(_db, Library,
-            create_method_kwargs=dict(name=u'Content Server'))
+        library = Library.default(_db)
         gutenberg.libraries.append(library)
         logging.info('CREATED Collection for %s: %r' % (
             DataSource.GUTENBERG, gutenberg))
@@ -73,7 +72,7 @@ try:
 
     # Alright, all the Collections have been created. Let's update the
     # LicensePools now.
-    base_query = _db.query(LicensePool)#.filter(LicensePool.collection_id==None)
+    base_query = _db.query(LicensePool).filter(LicensePool.collection_id==None)
 
     single_collection_sources = [
         DataSource.PLYMPTON, DataSource.ELIB, DataSource.UNGLUE_IT,

@@ -21,7 +21,7 @@ from core.model import (
     production_session,
 )
 
-log = logging.getLogger(name="Metadata Wrangler configuration import")
+log = logging.getLogger(name="Content Server configuration import")
 
 def log_import(integration_or_setting):
     log.info("CREATED: %r" % integration_or_setting)
@@ -30,6 +30,12 @@ def log_import(integration_or_setting):
 _db = production_session()
 try:
     Configuration.load()
+    library = Library.default(_db)
+    if not library:
+        library = create(
+            _db, Library, name=u'default', short_name=u'default'
+        )
+        library.is_default = True
 
     # Create the Bibblio integration.
     bibblio_conf = Configuration.integration('Bibblio')

@@ -344,7 +344,7 @@ class OPDSImportScript(BaseOPDSImportScript):
                     (name, data_source_name, collection.external_account_id))
 
             if is_new:
-                library = self._db.query(Library).one()
+                library = Library.default(self._db)
                 collection.libraries.append(library)
                 self.log.info('CREATED collection for %s: %r' % (
                     data_source_name, collection
@@ -1123,11 +1123,15 @@ class StaticFeedGenerationScript(StaticFeedScript):
     @property
     def library(self):
         """Provides a predictable library to use when creating static feeds"""
-        library = self.__library
-        if not library:
-            library = self._db.query(Library).one()
+        if self.__library:
+            return self.__library
+
+        library = Library.default(self._db)
+        if library:
             self.__library = library
-        return library
+            return self.__library
+
+        raise ValueError('Cannot run script without default library')
 
     def feed_pages_by_filename(self, feed_id, full_lane, youth_lane=None,
                                prefix='', license_link=None, include_search=False,
