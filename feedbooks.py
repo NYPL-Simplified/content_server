@@ -39,8 +39,8 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
             language_name = LanguageCodes.english_names.get(lang)[0]
             full_name = cls.BASE_COLLECTION_NAME + language_name
 
-            collection_args = [opds_url, full_name]
-            collection_data.append(tuple(collection_args))
+            collection_args = dict(url=opds_url, name=full_name)
+            collection_data.append(collection_args)
 
         return collection_data
 

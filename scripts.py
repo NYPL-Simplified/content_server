@@ -320,8 +320,11 @@ class OPDSImportScript(BaseOPDSImportScript):
         :param collection_data: A list of tuples containing a url and
             (optional) name, each representing an expected Collection.
         """
-        for url, name in collection_data:
-            name = name or data_source_name
+        if not isinstance(collection_data, list):
+            collection_data = [collection_data]
+
+        for collection_args in collection_data:
+            name = collection_args.get('name') or data_source_name
             collection, is_new = Collection.by_name_and_protocol(
                 self._db, name, ExternalIntegration.OPDS_IMPORT
             )
@@ -331,6 +334,7 @@ class OPDSImportScript(BaseOPDSImportScript):
                     Collection.DATA_SOURCE_NAME_SETTING, data_source_name
                 )
 
+            url = collection_args.get('url')
             if url and not collection.external_account_id:
                 collection.external_account_id = url
             elif url and url != collection.external_account_id:

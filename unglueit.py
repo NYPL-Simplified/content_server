@@ -10,7 +10,7 @@ class UnglueItImporter(OPDSImporterWithS3Mirror):
 
     @classmethod
     def collection_data(cls):
-        return [(u'https://unglue.it/api/opds/epub/', None)]
+        return dict(url=u'https://unglue.it/api/opds/epub/')
 
     def _check_for_gutenberg_first(self, url, headers, **kwargs):
         """Make a HEAD request for the given URL to make sure

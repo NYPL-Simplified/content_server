@@ -80,7 +80,7 @@ class TestOPDSImportScript(DatabaseTest):
         url = self._url
         import_script = OPDSImportScript(
             object(), DataSource.UNGLUE_IT,
-            collection_data=[(url, None)], _db=self._db
+            collection_data=[{'url' : url}], _db=self._db
         )
 
         # An OPDS_IMPORT Collection has been created for UnglueIt
@@ -94,7 +94,7 @@ class TestOPDSImportScript(DatabaseTest):
         # Creating the same Collection multiple times doesn't create a
         # new Collection.
         import_script.create_collections(
-            DataSource.UNGLUE_IT, [(url, None)]
+            DataSource.UNGLUE_IT, { 'url' : url }
         )
         recollection, ignore = Collection.by_name_and_protocol(
             self._db, DataSource.UNGLUE_IT, OPDS_IMPORT
@@ -103,7 +103,8 @@ class TestOPDSImportScript(DatabaseTest):
 
         # Collections can be created with unique names.
         import_script.create_collections(
-            DataSource.UNGLUE_IT, [(self._url, u'Other UnglueIt')]
+            DataSource.UNGLUE_IT,
+            [{ 'url' : self._url, 'name' : u'Other UnglueIt'}]
         )
         named, ignore = Collection.by_name_and_protocol(
             self._db, u'Other UnglueIt', OPDS_IMPORT
@@ -115,7 +116,7 @@ class TestOPDSImportScript(DatabaseTest):
         # Collection.
         assert_raises(
             ValueError, import_script.create_collections,
-            DataSource.UNGLUE_IT, [(u'http://unglue.it', None)]
+            DataSource.UNGLUE_IT, dict(url=u'http://unglue.it')
         )
 
         # Delete all the Collections we just created.
