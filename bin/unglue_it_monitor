@@ -11,7 +11,4 @@ from core.model import DataSource
 from scripts import OPDSImportScript
 from unglueit import UnglueItImporter
 
-OPDSImportScript(
-    UnglueItImporter,
-    DataSource.UNGLUE_IT,
-).run()
+OPDSImportScript(UnglueItImporter, DataSource.UNGLUE_IT).run()

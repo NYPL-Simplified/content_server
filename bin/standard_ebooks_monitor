@@ -14,4 +14,5 @@ from scripts import OPDSImportScript
 OPDSImportScript(
     OPDSImporterWithS3Mirror,
     DataSource.STANDARD_EBOOKS,
+    collection_data=[(u'https://standardebooks.org/opds/all', None)]
 ).run()

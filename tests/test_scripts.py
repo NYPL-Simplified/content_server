@@ -21,6 +21,7 @@ from ..core.lane import (
     Pagination,
 )
 from ..core.model import (
+    Collection,
     ConfigurationSetting,
     CustomList,
     DataSource,
@@ -41,12 +42,92 @@ from ..lanes import StaticFeedBaseLane
 from ..opds import StaticFeedAnnotator
 from ..s3 import DummyS3Uploader
 from ..scripts import (
+    CSVFeedGenerationScript,
     CustomListUploadScript,
     CustomListFeedGenerationScript,
+    DirectoryImportScript,
+    OPDSImportScript,
     StaticFeedGenerationScript,
     StaticFeedCSVExportScript,
-    CSVFeedGenerationScript,
 )
+from ..unglueit import UnglueItImporter
+
+
+class TestDirectoryImportScript(DatabaseTest):
+
+    def test_create_collection(self):
+        # Instantiate a default library.
+        self._default_library
+
+        import_script = DirectoryImportScript(_db=self._db)
+
+        import_script.create_collection(DataSource.PLYMPTON)
+
+        collection, is_new = Collection.by_name_and_protocol(
+            self._db, DataSource.PLYMPTON, ExternalIntegration.DIRECTORY_IMPORT
+        )
+        eq_(False, is_new)
+        eq_(DataSource.PLYMPTON, collection.data_source.name)
+
+
+class TestOPDSImportScript(DatabaseTest):
+
+    def test_create_collections(self):
+        # Instantiate a default library.
+        self._default_library
+
+        # Collections are created at initialization.
+        url = self._url
+        import_script = OPDSImportScript(
+            object(), DataSource.UNGLUE_IT,
+            collection_data=[(url, None)], _db=self._db
+        )
+
+        # An OPDS_IMPORT Collection has been created for UnglueIt
+        OPDS_IMPORT = ExternalIntegration.OPDS_IMPORT
+        collection, ignore = Collection.by_name_and_protocol(
+            self._db, DataSource.UNGLUE_IT, OPDS_IMPORT
+        )
+        eq_(DataSource.UNGLUE_IT, collection.data_source.name)
+        eq_(url, collection.external_account_id)
+
+        # Creating the same Collection multiple times doesn't create a
+        # new Collection.
+        import_script.create_collections(
+            DataSource.UNGLUE_IT, [(url, None)]
+        )
+        recollection, ignore = Collection.by_name_and_protocol(
+            self._db, DataSource.UNGLUE_IT, OPDS_IMPORT
+        )
+        eq_(collection, recollection)
+
+        # Collections can be created with unique names.
+        import_script.create_collections(
+            DataSource.UNGLUE_IT, [(self._url, u'Other UnglueIt')]
+        )
+        named, ignore = Collection.by_name_and_protocol(
+            self._db, u'Other UnglueIt', OPDS_IMPORT
+        )
+        assert named != collection
+        eq_(DataSource.UNGLUE_IT, named.data_source.name)
+
+        # But this method won't reset the OPDS feed URL for an existing
+        # Collection.
+        assert_raises(
+            ValueError, import_script.create_collections,
+            DataSource.UNGLUE_IT, [(u'http://unglue.it', None)]
+        )
+
+        # Delete all the Collections we just created.
+        for c in Collection.by_datasource(self._db, DataSource.UNGLUE_IT):
+            self._db.delete(c)
+        eq_([], Collection.by_datasource(self._db, DataSource.UNGLUE_IT).all())
+
+        # The Script can also create Collections from an OPDSImporter
+        import_script = OPDSImportScript(
+            UnglueItImporter, DataSource.UNGLUE_IT, _db=self._db
+        )
+        eq_(1, len(Collection.by_datasource(self._db, DataSource.UNGLUE_IT).all()))
 
 
 class TestStaticFeedCSVExportScript(DatabaseTest):

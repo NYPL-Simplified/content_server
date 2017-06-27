@@ -7,7 +7,11 @@ bin_dir = os.path.split(__file__)[0]
 package_dir = os.path.join(bin_dir, "..")
 sys.path.append(os.path.abspath(package_dir))
 
-from core.model import DataSource
+from core.model import (
+    DataSource,
+    production_session,
+)
+from core.util import LanguageCodes
 
 from scripts import OPDSImportScript
 from feedbooks import FeedbooksOPDSImporter

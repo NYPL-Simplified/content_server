@@ -189,7 +189,26 @@ class MakePresentationReadyScript(Script):
 
 class DirectoryImportScript(Script):
 
+    def create_collection(self, data_source_name):
+        name = data_source_name
+        collection, is_new = Collection.by_name_and_protocol(
+            self._db, name, ExternalIntegration.DIRECTORY_IMPORT
+        )
+
+        if not collection.data_source:
+            collection.external_integration.set_setting(
+                Collection.DATA_SOURCE_NAME_SETTING, data_source_name
+            )
+
+        if is_new:
+            library = self._db.query(Library).one()
+            collection.libraries.append(library)
+            self.log.info("CREATED Collection for %s: %r" % (
+                    data_source_name, collection))
+
     def run(self, data_source_name, metadata_records, epub_directory, cover_directory):
+        self.create_collection(data_source_name)
+
         replacement_policy = ReplacementPolicy(rights=True, links=True, formats=True, contributions=True)
         for metadata in metadata_records:
             primary_identifier = metadata.primary_identifier
@@ -280,13 +299,52 @@ class OPDSImportScript(BaseOPDSImportScript):
 
     IMPORTER_CLASS = None
 
-    def __init__(self, importer_class, data_source_name, _db=None):
+    def __init__(self, importer_class, data_source_name,
+                 collection_data=None, _db=None
+    ):
         super(OPDSImportScript, self).__init__(_db=_db)
 
         self.IMPORTER_CLASS = importer_class
 
+        # Create Collection(s) for this import.
+        collection_data = collection_data or importer_class.collection_data()
+        self.create_collections(data_source_name, collection_data)
+
+        # Find every Collection with this DataSource.
         collections = Collection.by_datasource(self._db, data_source_name)
         self.collections = collections.all()
+
+    def create_collections(self, data_source_name, collection_data):
+        """Creates a Collection with OPDS_IMPORT protocol.
+
+        :param collection_data: A list of tuples containing a url and
+            (optional) name, each representing an expected Collection.
+        """
+        for url, name in collection_data:
+            name = name or data_source_name
+            collection, is_new = Collection.by_name_and_protocol(
+                self._db, name, ExternalIntegration.OPDS_IMPORT
+            )
+
+            if not collection.data_source:
+                collection.external_integration.set_setting(
+                    Collection.DATA_SOURCE_NAME_SETTING, data_source_name
+                )
+
+            if url and not collection.external_account_id:
+                collection.external_account_id = url
+            elif url and url != collection.external_account_id:
+                raise ValueError(
+                    ("Collection with name '%s' and DataSource '%s' already"
+                     " exists with OPDS feed URL %s") %
+                    (name, data_source_name, collection.external_account_id))
+
+            if is_new:
+                library = self._db.query(Library).one()
+                collection.libraries.append(library)
+                self.log.info('CREATED collection for %s: %r' % (
+                    data_source_name, collection
+                ))
 
     def do_run(self, cmd_args=None):
         parsed = self.parse_command_line(self._db, cmd_args=cmd_args)
