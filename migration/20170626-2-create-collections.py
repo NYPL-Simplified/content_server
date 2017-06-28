@@ -52,7 +52,7 @@ try:
 
     # Create a StandardEbooks Collection.
     OPDSImportScript(object(), DataSource.STANDARD_EBOOKS, _db=_db,
-        collection_data=[(u'https://standardebooks.org/opds/all', None)])
+        collection_data=dict(url=u'https://standardebooks.org/opds/all'))
 
     # Create a Gutenberg Collection.
     gutenberg, is_new = Collection.by_name_and_protocol(

@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import logging
+import uuid
 from nose.tools import set_trace
 
 bin_dir = os.path.split(__file__)[0]
@@ -17,7 +18,7 @@ from core.model import (
     ConfigurationSetting,
     ExternalIntegration as EI,
     Library,
-    get_one_or_create,
+    create,
     production_session,
 )
 
@@ -32,8 +33,9 @@ try:
     Configuration.load()
     library = Library.default(_db)
     if not library:
-        library = create(
-            _db, Library, name=u'default', short_name=u'default'
+        library, ignore = create(
+            _db, Library, name=u'default', short_name=u'default',
+            uuid=unicode(uuid.uuid4())
         )
         library.is_default = True
 
@@ -71,10 +73,6 @@ try:
         setting = ConfigurationSetting.sitewide(_db, Configuration.BASE_URL_KEY)
         setting.value = url
         log_import(setting)
-
-    # Create a default library.
-    library = Library.instance(_db)
-    log.info('Default library created: %r' % library)
 
     # Copy facet configuration to the library.
     facet_policy = Configuration.policy("facets", default={})
