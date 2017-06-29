@@ -1,4 +1,5 @@
 # encoding=utf8
+import os
 from nose.tools import (
     eq_,
     set_trace,
@@ -7,12 +8,9 @@ from nose.tools import (
 from flask import url_for
 
 from . import DatabaseTest
+from ..config import Configuration
 from ..opds import ContentServerAnnotator
-from ..config import(
-    Configuration,
-    temp_config,
-)
-import os
+
 from ..controller import (
     ContentServer,
     ContentServerController,
@@ -33,6 +31,9 @@ from ..core.lane import(
     Pagination,
     Lane,
 )
+
+from ..core.problem_details import INVALID_INPUT
+from ..core.util.problem_detail import ProblemDetail
 
 import feedparser
 
@@ -180,3 +181,46 @@ class TestFeedController(ControllerTest):
             response = self.content_server.opds_feeds.feed()
             assert "family_name" in response.data
             assert "Sylvia_Louise_Engdahl" in response.data
+
+    def test_custom_list_feed(self):
+        """A feed of Works from a CustomList can be generated"""
+        controller = self.content_server.opds_feeds
+
+        # If the CustomList can't be found, a ProblemDetail is returned.
+        with self.app.test_request_context('/'):
+            response = controller.custom_list_feed('my-faves')
+            eq_(True, isinstance(response, ProblemDetail))
+            eq_(INVALID_INPUT.status_code, response.status_code)
+            eq_('Invalid input.', str(response.title))
+            eq_("Available CustomList 'my-faves' not found.", response.detail)
+
+        # If a CustomList exists, but it doesn't have the LIBRARY_STAFF
+        # DataSource, a ProblemDetail is returned.
+        custom_list, editions = self._customlist(foreign_identifier='my-faves')
+        SessionManager.refresh_materialized_views(self._db)
+        with self.app.test_request_context('/'):
+            response = controller.custom_list_feed('my-faves')
+            eq_(True, isinstance(response, ProblemDetail))
+            eq_(INVALID_INPUT.status_code, response.status_code)
+            eq_('Invalid input.', str(response.title))
+            eq_("Available CustomList 'my-faves' not found.", response.detail)
+
+        # Otherwise we get a feed with only the available works in the list.
+        custom_list.data_source = DataSource.lookup(self._db, DataSource.LIBRARY_STAFF)
+        custom_list.name = 'My Faves'
+        feed_from_identifier = None
+        with self.app.test_request_context('/'):
+            response = controller.custom_list_feed('my-faves')
+            feed = feedparser.parse(response.data)
+            eq_('All books from My Faves', feed.feed.title)
+            eq_(1, len(feed.entries))
+            eq_(editions[0].title, feed.entries[0].title)
+            feed_from_identifier = feed
+
+        # We can also get this list by using the name instead of the
+        # foreign_identifier.
+        with self.app.test_request_context('/'):
+            response = controller.custom_list_feed('My Faves')
+            feed_from_name = feedparser.parse(response.data)
+            eq_('All books from My Faves', feed_from_name.feed.title)
+            eq_(feed_from_identifier, feed_from_name)
