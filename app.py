@@ -64,6 +64,11 @@ def feed():
 def feed_from_license_source(license_source_name):
     return app.content_server.opds_feeds.feed(license_source_name)
 
+@app.route('/works/lists/<list_identifier>')
+@returns_problem_detail
+def feed_from_custom_list(list_identifier):
+    return app.content_server.opds_feeds.custom_list_feed(list_identifier)
+
 @app.route('/lookup')
 def lookup():
     return URNLookupController(app.content_server._db).work_lookup(ContentServerAnnotator)
