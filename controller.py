@@ -130,9 +130,10 @@ class OPDSFeedController(ContentServerController):
                 "Available CustomList '%s' not found." % list_identifier
             )
 
+        library = Library.default(self._db)
         lane_name = 'All books from %s' % custom_list.name
         lane = Lane(
-            self._db, lane_name,
+            library, lane_name,
             list_identifier=custom_list.foreign_identifier,
         )
 
@@ -142,6 +143,7 @@ class OPDSFeedController(ContentServerController):
             _external=True
         )
 
+        flask.request.library = library
         facets = load_facets_from_request(Configuration)
         if isinstance(facets, ProblemDetail):
             return facets
