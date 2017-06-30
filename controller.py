@@ -25,6 +25,7 @@ from core.app_server import (
 
 from core.model import (
     production_session,
+    CustomList,
     DataSource,
     Library
 )
@@ -111,4 +112,49 @@ class OPDSFeedController(ContentServerController):
             pagination=pagination,
         )
         return feed_response(opds_feed.content) 
-        
+
+    def custom_list_feed(self, list_identifier):
+        """Creates an OPDS feed with the Works from a CustomList.
+
+        :param list_identifier: a basestring representing either the
+            name or the foreign_identifier of an existing CustomList
+
+        :return: an OPDS feed or a ProblemDetail
+        """
+        # Right now we only allow downloading of staff-created lists.
+        source = DataSource.LIBRARY_STAFF
+        custom_list = CustomList.find(self._db, source, list_identifier)
+
+        if not custom_list:
+            return INVALID_INPUT.detailed(
+                "Available CustomList '%s' not found." % list_identifier
+            )
+
+        library = Library.default(self._db)
+        lane_name = 'All books from %s' % custom_list.name
+        lane = Lane(
+            library, lane_name,
+            list_identifier=custom_list.foreign_identifier,
+        )
+
+        url = url_for(
+            'feed_from_custom_list',
+            list_identifier=custom_list.foreign_identifier,
+            _external=True
+        )
+
+        flask.request.library = library
+        facets = load_facets_from_request(Configuration)
+        if isinstance(facets, ProblemDetail):
+            return facets
+        pagination = load_pagination_from_request()
+        if isinstance(pagination, ProblemDetail):
+            return pagination
+
+        custom_list_feed = AcquisitionFeed.page(
+            self._db, lane_name, url, lane,
+            annotator=self.annotator(),
+            facets=facets,
+            pagination=pagination,
+        )
+        return feed_response(custom_list_feed.content)
