@@ -18,20 +18,33 @@ from core.model import (
     Representation,
     RightsStatus,
 )
+from core.util import LanguageCodes
 from core.util.epub import EpubAccessor
 from core.util.http import HTTP
 
 
 class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
 
-    DATA_SOURCE_NAME = "FeedBooks"
+    BASE_OPDS_URL = u'http://www.feedbooks.com/books/recent.atom?lang='
+    BASE_COLLECTION_NAME = unicode(DataSource.FEEDBOOKS + ' - ')
+
     THIRTY_DAYS = datetime.timedelta(days=30)
 
-    def __init__(self, _db, data_source_name=None, new_css=None, *args, **kwargs):
-        """
-        :param data_source_name: Passed in by OPDSImportScript and ignored.
-        """
-        kwargs['data_source_offers_licenses'] = True
+    @classmethod
+    def collection_data(cls):
+        """Returns data to create each Collection in the OPDSImportScript"""
+        collection_data = list()
+        for lang in ['en', 'es', 'fr', 'it', 'de']:
+            opds_url = cls.BASE_OPDS_URL + lang
+            language_name = LanguageCodes.english_names.get(lang)[0]
+            full_name = cls.BASE_COLLECTION_NAME + language_name
+
+            collection_args = dict(url=opds_url, name=full_name)
+            collection_data.append(collection_args)
+
+        return collection_data
+
+    def __init__(self, _db, collection, new_css=None, *args, **kwargs):
         kwargs['content_modifier'] = self.replace_css
 
         if new_css:
@@ -40,7 +53,7 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
             self.new_css = HTTP.get_with_timeout("http://www.daisy.org/z3986/2005/dtbook.2005.basic.css").content
 
         super(FeedbooksOPDSImporter, self).__init__(
-            _db, self.DATA_SOURCE_NAME, *args, **kwargs
+            _db, collection, **kwargs
         )
 
     def extract_feed_data(self, feed, feed_url=None):

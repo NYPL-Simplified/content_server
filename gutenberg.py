@@ -19,12 +19,12 @@ from nose.tools import set_trace
 import rdflib
 from rdflib import Namespace
 
-from core.coverage import CoverageProvider
 from core.model import (
     get_one_or_create,
     CirculationEvent,
     Contributor,
     Edition,
+    ExternalIntegration,
     DataSource,
     Hyperlink,
     Measurement,
@@ -33,6 +33,7 @@ from core.model import (
     RightsStatus,
     Identifier,
     LicensePool,
+    Session,
     Subject,
     DeliveryMechanism,
 )
@@ -86,6 +87,7 @@ class GutenbergAPI(object):
 
     def __init__(self, _db, data_directory):
         self._db = _db
+        self.collection = Collection.by_protocol(self._db, ExternalIntegration.GUTENBERG).one()
         self.source = DataSource.lookup(self._db, DataSource.GUTENBERG)
         self.data_directory = data_directory
         self.catalog_path = os.path.join(self.data_directory, self.FILENAME)
@@ -152,7 +154,7 @@ class GutenbergAPI(object):
                 data = fh.read()
                 fake_fh = StringIO(data)
                 book, license, new = GutenbergRDFExtractor.book_in(
-                    self._db, pg_id, fake_fh)
+                    self.collection, pg_id, fake_fh)
 
                 if book and license:
                     yield (book, license)
@@ -189,7 +191,7 @@ class GutenbergRDFExtractor(object):
         return None
 
     @classmethod
-    def book_in(cls, _db, pg_id, fh):
+    def book_in(cls, collection, pg_id, fh):
 
         """Yield a Edition object for the book described by the given
         filehandle, creating it (but not committing it) if necessary.
@@ -224,7 +226,7 @@ class GutenbergRDFExtractor(object):
             # languages. Not sure what to do about that.
             uri, ignore, title = title_triples[0]
             logging.info("Parsing book %s", title)
-            book, license, new = cls.parse_book(_db, g, uri, title)
+            book, license, new = cls.parse_book(collection, g, uri, title)
 
         else:
             book = None
@@ -234,7 +236,7 @@ class GutenbergRDFExtractor(object):
         return book, license, new
 
     @classmethod
-    def parse_book(cls, _db, g, uri, title):
+    def parse_book(cls, collection, g, uri, title):
         """Turn an RDF graph into a Edition for the given `uri` and
         `title`.
         """
@@ -338,6 +340,7 @@ class GutenbergRDFExtractor(object):
                         rights_uri=rights_uri,
                     ))
 
+        _db  = Session.object_session(collection)
         metadata = Metadata(
             data_source=DataSource.GUTENBERG,
             title=title,
@@ -352,7 +355,7 @@ class GutenbergRDFExtractor(object):
             links=links,
         )
         edition, new = metadata.edition(_db)
-        metadata.apply(edition)
+        metadata.apply(edition, collection)
 
         # Ensure that an open-access LicensePool exists for this book.
         circulation_data = CirculationData(
@@ -363,9 +366,11 @@ class GutenbergRDFExtractor(object):
             links=links,
         )
 
-        license_pool, new_license_pool = circulation_data.license_pool(_db)
+        license_pool, new_license_pool = circulation_data.license_pool(
+            _db, collection
+        )
         replace = ReplacementPolicy(formats=True)
-        circulation_data.apply(license_pool, replace=replace)
+        circulation_data.apply(_db, collection, replace=replace)
         license_pool.calculate_work()
         return edition, license_pool, new
 
