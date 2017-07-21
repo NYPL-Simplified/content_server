@@ -1483,7 +1483,7 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
             list_data_source=parsed.list_source, list_identifier=list_id,
             exclude_genres=exclude_genres
         )
-        lanelist = make_lanes(self.library, lanes_policy)
+        lanelist = make_lanes(self._db, self.library, lanes_policy)
         full_lane = self.create_base_lane(
             u"All Books", lanelist=lanelist, **lane_details)
 
