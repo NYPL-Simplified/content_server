@@ -1483,7 +1483,7 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
             list_data_source=parsed.list_source, list_identifier=list_id,
             exclude_genres=exclude_genres
         )
-        lanelist = make_lanes(self.library, lanes_policy)
+        lanelist = make_lanes(self._db, self.library, lanes_policy)
         full_lane = self.create_base_lane(
             u"All Books", lanelist=lanelist, **lane_details)
 
@@ -1517,7 +1517,8 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
             lanes = lanes.lanes
 
         return Lane(
-            self.library, name,
+            self._db, self.library,
+            name,
             display_name=name,
             parent=None,
             sublanes=lanes,
@@ -1573,7 +1574,8 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
             identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                            for urn in parsed.urns]
             full_lane = StaticFeedBaseLane(
-                self.library, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+                self._db, self.library, identifiers,
+                StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
             full_query = full_lane.works()
 
@@ -1638,7 +1640,7 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
         youth_lane = None
         if all_youth:
             youth_lane = StaticFeedBaseLane(
-                self.library, all_youth, u"Children's Books"
+                self._db, self.library, all_youth, u"Children's Books"
             )
 
         if not lanes:
@@ -1646,7 +1648,8 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
             # create and return a single StaticFeedBaseLane.
             identifiers = urns_to_identifiers.values()
             single_lane = StaticFeedBaseLane(
-                self.library, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+                self._db, self.library, identifiers,
+                StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
             return single_lane, single_lane.works(), youth_lane, rejected_covers
 
@@ -1660,7 +1663,8 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
             lane_path = self.header_to_path(lane_header)
             featured = filter(lambda i: i in all_featured, identifiers)
             base_lane = StaticFeedBaseLane(
-                self.library, identifiers, lane_path[-1], featured=featured
+                self._db, self.library, identifiers, lane_path[-1],
+                featured=featured
             )
             lanes_with_works.append(base_lane)
 
@@ -1722,7 +1726,7 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
         if not parent:
             # Create a top level lane.
             return StaticFeedParentLane(
-                self.library, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME,
+                self._db, self.library, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME,
                 include_all=False,
                 searchable=True,
                 invisible=True
@@ -1730,7 +1734,7 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
         else:
             # Create a visible intermediate lane.
             return StaticFeedParentLane(
-                self.library, name,
+                self._db, self.library, name,
                 parent=parent,
                 include_all=False
             )

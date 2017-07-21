@@ -93,7 +93,7 @@ class OPDSFeedController(ContentServerController):
             license_source=None
 
         library = Library.default(self._db)
-        lane = Lane(library, lane_name, license_source=license_source)
+        lane = Lane(self._db, library, lane_name, license_source=license_source)
 
         url = url_for("feed", _external=True)
 
@@ -133,7 +133,7 @@ class OPDSFeedController(ContentServerController):
         library = Library.default(self._db)
         lane_name = 'All books from %s' % custom_list.name
         lane = Lane(
-            library, lane_name,
+            self._db, library, lane_name,
             list_identifier=custom_list.foreign_identifier,
         )
 

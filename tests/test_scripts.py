@@ -431,7 +431,8 @@ class TestStaticFeedGenerationScript(DatabaseTest):
             identifier = work.license_pools[0].identifier
             identifiers.append(identifier)
         lane = StaticFeedBaseLane(
-            self.library, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+            self._db, self.library, identifiers,
+            StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
         annotator = StaticFeedAnnotator('https://mta.librarysimplified.org')
 
@@ -463,7 +464,8 @@ class TestStaticFeedGenerationScript(DatabaseTest):
 
         pagination = Pagination(size=1)
         lane = StaticFeedBaseLane(
-            self.library, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+            self._db, self.library, identifiers,
+            StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
         )
         facet = Facets(
             None, 'main', 'always', 'author',
