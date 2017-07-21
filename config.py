@@ -10,12 +10,6 @@ from core.facets import FacetConstants as Facets
 
 class Configuration(CoreConfiguration):
 
-    S3_STATIC_FEED_BUCKET = "static_feed_bucket"
-
-    BIBBLIO_INTEGRATION = "Bibblio"
-    BIBBLIO_ID = "client_id"
-    BIBBLIO_SECRET = "client_secret"
-
     DEFAULT_ENABLED_FACETS = {
         Facets.ORDER_FACET_GROUP_NAME : [
             Facets.ORDER_AUTHOR, Facets.ORDER_TITLE, Facets.ORDER_ADDED_TO_COLLECTION
@@ -33,6 +27,15 @@ class Configuration(CoreConfiguration):
         Facets.AVAILABILITY_FACET_GROUP_NAME : Facets.AVAILABLE_OPEN_ACCESS,
         Facets.COLLECTION_FACET_GROUP_NAME : Facets.COLLECTION_FULL,
     }
+
+    @classmethod
+    def default_facet(cls, group):
+        return cls.DEFAULT_FACET.get(group)
+
+    @classmethod
+    def enabled_facets(cls, group):
+        return cls.DEFAULT_ENABLED_FACETS.get(group)
+
 
 @contextlib.contextmanager
 def temp_config(new_config=None):

@@ -9,6 +9,7 @@ from nose.tools import set_trace, eq_
 from ..core.model import (
     Contributor,
     DataSource,
+    ExternalIntegration,
     Hyperlink,
     Resource,
     Subject,
@@ -28,13 +29,17 @@ from . import (
 
 class TestGutenbergMetadataExtractor(DatabaseTest):
 
+    def setup(self):
+        super(TestGutenbergMetadataExtractor, self).setup()
+        self.collection = self._collection(protocol=ExternalIntegration.GUTENBERG)
+
     def sample_data(self, filename):
         return sample_data(filename, "gutenberg")
 
     def test_rdf_parser(self):
         """Parse RDF into a Edition."""
         fh = StringIO.StringIO(self.sample_data("gutenberg-17.rdf"))
-        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "17", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self.collection, "17", fh)
 
         # Verify that the Edition is hooked up to the correct
         # DataSource and Identifier.
@@ -89,13 +94,13 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
 
     def test_unicode_characters_in_title(self):
         fh = StringIO.StringIO(self.sample_data("gutenberg-10130.rdf"))
-        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "10130", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self.collection, "10130", fh)
         eq_(u"The Works of Charles and Mary Lamb — Volume 3", book.title)
         eq_("Books for Children", book.subtitle)
 
     def test_includes_cover_image(self):
         fh = StringIO.StringIO(self.sample_data("gutenberg-40993.rdf"))
-        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "40993", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self.collection, "40993", fh)
 
         identifier = book.primary_identifier
 
@@ -107,14 +112,14 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
         """GutenbergRDFExtractor can handle an RDF document that doesn't
         describe any books."""
         fh = StringIO.StringIO(self.sample_data("gutenberg-0.rdf"))
-        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "0", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self.collection, "0", fh)
         eq_(None, book)
         eq_(False, new)
 
     def test_audio_book(self):
         """An audio book is loaded with its medium set to AUDIO."""
         fh = StringIO.StringIO(self.sample_data("pg28794.rdf"))
-        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "28794", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self.collection, "28794", fh)
         eq_(Edition.AUDIO_MEDIUM, book.medium)
 
 
@@ -123,7 +128,7 @@ class TestGutenbergMetadataExtractor(DatabaseTest):
         be treated as 'in copyright' rather than as an open access book.
         """
         fh = StringIO.StringIO(self.sample_data("pg16.rdf"))
-        book, pool, new = GutenbergRDFExtractor.book_in(self._db, "16", fh)
+        book, pool, new = GutenbergRDFExtractor.book_in(self.collection, "16", fh)
         eq_(RightsStatus.IN_COPYRIGHT, pool.delivery_mechanisms[0].rights_status.uri)
         eq_(False, pool.open_access)
 

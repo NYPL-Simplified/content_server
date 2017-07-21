@@ -15,6 +15,10 @@ from sqlalchemy.orm import (
     eagerload,
 )
 
+from core.config import (
+    CannotLoadConfiguration,
+    Configuration,
+)
 from core.coverage import (
     CoverageFailure,
     WorkCoverageProvider,
@@ -24,9 +28,11 @@ from core.model import (
     Credential,
     CustomList,
     CustomListEntry,
+    ConfigurationSetting,
     DataSource,
     DeliveryMechanism,
     Edition,
+    ExternalIntegration,
     Identifier,
     LicensePool,
     LicensePoolDeliveryMechanism,
@@ -36,8 +42,6 @@ from core.model import (
 )
 from core.util.epub import EpubAccessor
 from core.util.http import HTTP
-
-from config import Configuration
 
 
 class BibblioAPI(object):
@@ -52,13 +56,14 @@ class BibblioAPI(object):
 
     @classmethod
     def from_config(cls, _db):
-        config = Configuration.integration(Configuration.BIBBLIO_INTEGRATION)
-        if not (config and len(config.values())==2):
-            return None
+        integration = ExternalIntegration.lookup(
+            _db, ExternalIntegration.BIBBLIO, ExternalIntegration.METADATA_GOAL
+        )
 
-        client_id = config.get(Configuration.BIBBLIO_ID)
-        client_secret = config.get(Configuration.BIBBLIO_SECRET)
-        return cls(_db, client_id, client_secret)
+        if not integration or not (integration.username and integration.password):
+            raise CannotLoadConfiguration('Bibblio improperly configured')
+
+        return cls(_db, integration.username, integration.password)
 
     @classmethod
     def set_timestamp(cls, resource, create=False):
@@ -171,10 +176,9 @@ class BibblioAPI(object):
 
 class BibblioCoverageProvider(WorkCoverageProvider):
 
-    DATA_SOURCE_NAME = DataSource.BIBBLIO
+    SERVICE_NAME = u'Bibblio Coverage Provider'
     DEFAULT_BATCH_SIZE = 25
-    SERVICE_NAME = 'Bibblio Coverage Provider'
-    OPERATION = 'bibblio-export'
+    OPERATION = u'bibblio-export'
 
     INSTANT_CLASSICS_SOURCES = [
         DataSource.FEEDBOOKS,
@@ -191,10 +195,7 @@ class BibblioCoverageProvider(WorkCoverageProvider):
     def __init__(self, _db, custom_list_identifier,
                  api=None, fiction=False, languages=None,
                  catalogue_identifier=None, **kwargs):
-        super(BibblioCoverageProvider, self).__init__(
-            _db, self.SERVICE_NAME, self.OPERATION,
-            batch_size=self.DEFAULT_BATCH_SIZE, **kwargs
-        )
+        super(BibblioCoverageProvider, self).__init__(_db, **kwargs)
 
         self.custom_list = CustomList.find(
             self._db, DataSource.LIBRARY_STAFF, custom_list_identifier
@@ -209,8 +210,8 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         self.catalogue_id = catalogue_identifier
 
     @property
-    def output_source(self):
-        return DataSource.lookup(self._db, self.DATA_SOURCE_NAME)
+    def data_source(self):
+        return DataSource.lookup(self._db, DataSource.BIBBLIO)
 
     def items_that_need_coverage(self, identifiers=None, **kwargs):
         qu = super(BibblioCoverageProvider, self).items_that_need_coverage(
@@ -249,7 +250,7 @@ class BibblioCoverageProvider(WorkCoverageProvider):
             result = self.api.create_content_item(content_item)
         except Exception as e:
             return CoverageFailure(
-                work, str(e), data_source=self.output_source,
+                work, str(e), data_source=self.data_source,
                 transient=True
             )
 
@@ -259,7 +260,7 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         )
 
         identifier = work.presentation_edition.primary_identifier
-        identifier.equivalent_to(self.output_source, bibblio_identifier, 1)
+        identifier.equivalent_to(self.data_source, bibblio_identifier, 1)
 
         return work
 
@@ -279,13 +280,10 @@ class BibblioCoverageProvider(WorkCoverageProvider):
 
         return content_item
 
-    @classmethod
-    def edition_permalink(cls, edition):
+    def edition_permalink(self, edition):
         """Gets a unique URL for the target Work"""
 
-        base_url = Configuration.integration_url(
-            Configuration.CONTENT_SERVER_INTEGRATION, required=True
-        )
+        base_url = ConfigurationSetting.sitewide(self._db, Configuration.BASE_URL_KEY).value
         scheme, host = urlparse(base_url)[0:2]
         base_url = '://'.join([scheme, host])
 
@@ -308,8 +306,9 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         representations = self._db.query(Representation)\
             .join(Representation.resource)\
             .join(Resource.licensepooldeliverymechanisms)\
-            .join(LicensePoolDeliveryMechanism.license_pool)\
+            .join(LicensePoolDeliveryMechanism.identifier)\
             .join(LicensePoolDeliveryMechanism.delivery_mechanism)\
+            .join(Identifier.licensed_through)\
             .filter(
                 LicensePool.work_id==work.id,
                 DeliveryMechanism.drm_scheme==DeliveryMechanism.NO_DRM)\

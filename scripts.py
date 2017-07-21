@@ -18,7 +18,10 @@ from sqlalchemy.orm.exc import (
 )
 
 from core.classifier import Classifier
-from core.scripts import Script
+from core.scripts import (
+    Script,
+    OPDSImportScript as BaseOPDSImportScript,
+)
 from core.lane import (
     Facets,
     Lane,
@@ -33,16 +36,17 @@ from core.metadata_layer import (
 )
 from core.model import (
     Classification,
-    create,
+    Collection,
+    ConfigurationSetting,
     CustomList,
     DataSource,
     DeliveryMechanism,
     Edition,
+    ExternalIntegration,
     Genre,
-    get_one,
-    get_one_or_create,
     Hyperlink,
     Identifier,
+    Library,
     LicensePool,
     Measurement,
     Representation,
@@ -51,8 +55,11 @@ from core.model import (
     Subject,
     Work,
     WorkGenre,
+    create,
+    get_one,
+    get_one_or_create,
 )
-from core.monitor import PresentationReadyMonitor
+from core.monitor import MakePresentationReadyMonitor
 from core.opds import AcquisitionFeed
 from core.external_search import ExternalSearchIndex
 from core.util import (
@@ -175,18 +182,38 @@ class MakePresentationReadyScript(Script):
         epub = GutenbergEPUBCoverageProvider(self._db)
 
         providers = [epub]
-        PresentationReadyMonitor(
-            self._db, providers, calculate_work_even_if_no_author=True).run()
+        MakePresentationReadyMonitor(
+            self._db, providers, calculate_work_even_if_no_author=True
+        ).run()
 
 
 class DirectoryImportScript(Script):
 
+    def create_collection(self, data_source_name):
+        name = data_source_name
+        collection, is_new = Collection.by_name_and_protocol(
+            self._db, name, ExternalIntegration.DIRECTORY_IMPORT
+        )
+
+        if not collection.data_source:
+            collection.external_integration.set_setting(
+                Collection.DATA_SOURCE_NAME_SETTING, data_source_name
+            )
+
+        if is_new:
+            library = self._db.query(Library).one()
+            collection.libraries.append(library)
+            self.log.info("CREATED Collection for %s: %r" % (
+                    data_source_name, collection))
+
     def run(self, data_source_name, metadata_records, epub_directory, cover_directory):
+        self.create_collection(data_source_name)
+
         replacement_policy = ReplacementPolicy(rights=True, links=True, formats=True, contributions=True)
         for metadata in metadata_records:
             primary_identifier = metadata.primary_identifier
 
-            uploader = S3Uploader()
+            uploader = S3Uploader.from_config(self._db)
             paths = dict()
 
             url = uploader.book_url(primary_identifier, "epub")
@@ -264,6 +291,71 @@ class DirectoryImportScript(Script):
             self._db.commit()
 
 
+class OPDSImportScript(BaseOPDSImportScript):
+
+    """An OPDSImportScript class that finds a collection based on its
+    DataSource instead of parsing the command line.
+    """
+
+    IMPORTER_CLASS = None
+
+    def __init__(self, importer_class, data_source_name,
+                 collection_data=None, _db=None
+    ):
+        super(OPDSImportScript, self).__init__(_db=_db)
+
+        self.IMPORTER_CLASS = importer_class
+
+        # Create Collection(s) for this import.
+        collection_data = collection_data or importer_class.collection_data()
+        self.create_collections(data_source_name, collection_data)
+
+        # Find every Collection with this DataSource.
+        collections = Collection.by_datasource(self._db, data_source_name)
+        self.collections = collections.all()
+
+    def create_collections(self, data_source_name, collection_data):
+        """Creates a Collection with OPDS_IMPORT protocol.
+
+        :param collection_data: A list of tuples containing a url and
+            (optional) name, each representing an expected Collection.
+        """
+        if not isinstance(collection_data, list):
+            collection_data = [collection_data]
+
+        for collection_args in collection_data:
+            name = collection_args.get('name') or data_source_name
+            collection, is_new = Collection.by_name_and_protocol(
+                self._db, name, ExternalIntegration.OPDS_IMPORT
+            )
+
+            if not collection.data_source:
+                collection.external_integration.set_setting(
+                    Collection.DATA_SOURCE_NAME_SETTING, data_source_name
+                )
+
+            url = collection_args.get('url')
+            if url and not collection.external_account_id:
+                collection.external_account_id = url
+            elif url and url != collection.external_account_id:
+                raise ValueError(
+                    ("Collection with name '%s' and DataSource '%s' already"
+                     " exists with OPDS feed URL %s") %
+                    (name, data_source_name, collection.external_account_id))
+
+            if is_new:
+                library = Library.default(self._db)
+                collection.libraries.append(library)
+                self.log.info('CREATED collection for %s: %r' % (
+                    data_source_name, collection
+                ))
+
+    def do_run(self, cmd_args=None):
+        parsed = self.parse_command_line(self._db, cmd_args=cmd_args)
+        for collection in self.collections:
+            self.run_monitor(collection, force=parsed.force)
+
+
 class StaticFeedScript(Script):
 
     # Barebones headers that will get you a human-readable csv or
@@ -308,22 +400,33 @@ class StaticFeedScript(Script):
         bullet = "\n    - "
         for id in missing_ids:
             identifier = self._db.query(Identifier).filter(Identifier.id==id).one()
-            license_pool = identifier.licensed_through
-            if not license_pool:
+            pools = identifier.licensed_through
+            if not pools:
                 detail_list += (bullet + "%r : No LicensePool found." % identifier)
                 continue
 
-            license_pool_message = bullet + "%r : LicensePool has been "
-            if license_pool.suppressed:
-                message = license_pool_message + "suppressed."
-                detail_list +=  (message % license_pool)
-                continue
-            if license_pool.superceded:
-                message = license_pool_message + "superceded."
-                detail_list +=  (message % license_pool)
+            message = bullet
+            license_pool_message = "%d LicensePool(s) have been "
+            suppressed_msg = superceded_msg = ''
+
+            suppressed = filter(lambda lp: lp.suppressed, pools)
+            superceded = filter(lambda lp: lp.superceded, pools)
+            if suppressed:
+                suppressed_msg = (license_pool_message+"suppressed") % len(suppressed)
+
+            if superceded:
+                superceded_msg = (license_pool_message+"superceded") % len(superceded)
+
+            if suppressed and superceded:
+                message += suppressed_msg + ' and ' + superceded_msg + '.'
+            else:
+                message += (suppressed_msg or superceded_msg) + '.'
+
+            if suppressed or superceded:
+                detail_list += message
                 continue
 
-            work = license_pool.work
+            work = identifier.work
             if not work:
                 detail_list += (bullet + "%r : No Work found." % license_pool)
                 continue
@@ -463,9 +566,15 @@ class StaticFeedCSVExportScript(StaticFeedScript):
     def base_works_query(self):
         """The base query for works, used externally for testing."""
         return self._db.query(Work, Identifier, Resource.url).\
-            enable_eagerloads(False).join(Work.license_pools).\
-            join(LicensePool.data_source).join(LicensePool.links).\
-            join(LicensePool.identifier).join(Hyperlink.resource)
+            enable_eagerloads(False)\
+            .join(Work.license_pools)\
+            .join(LicensePool.collection)\
+            .join(ExternalIntegration, Collection.external_integration_id==ExternalIntegration.id)\
+            .join(ConfigurationSetting)\
+            .join(LicensePool.identifier)\
+            .join(Identifier.links)\
+            .join(Hyperlink.resource)\
+            .filter(ConfigurationSetting.key==Collection.DATA_SOURCE_NAME_SETTING)
 
     def do_run(self):
         parser = self.arg_parser().parse_args()
@@ -479,7 +588,7 @@ class StaticFeedCSVExportScript(StaticFeedScript):
 
         # Get all Works from the DataSources.
         works_qu = self.base_works_query.filter(
-            DataSource.name.in_(source_names),
+            ConfigurationSetting.value.in_(source_names),
             Hyperlink.rel==Hyperlink.OPEN_ACCESS_DOWNLOAD,
             Resource.url.like(u'%.epub')
         )
@@ -763,7 +872,7 @@ class CustomListUploadScript(StaticFeedScript):
     def source(self):
         return DataSource.lookup(self._db, DataSource.LIBRARY_STAFF)
 
-    def run(self, cmd_args=None):
+    def do_run(self, cmd_args=None):
         # Extract parameter values from the parser
         parsed = self.arg_parser().parse_args(cmd_args)
         source_csv = parsed.source_csv
@@ -984,6 +1093,8 @@ class StaticFeedGenerationScript(StaticFeedScript):
         ]
     }
 
+    __library = None
+
     @classmethod
     def arg_parser(cls):
         parser = argparse.ArgumentParser()
@@ -999,6 +1110,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
             '--license', help='The url location of the licensing document for this feed'
         )
         parser.add_argument(
+            '--storage-bucket', help='The S3 bucket to which static feeds should be uploaded'
+        )
+        parser.add_argument(
             '--search-url', help='Upload to this elasticsearch url. elasticsearch-index must also be included'
         )
         parser.add_argument(
@@ -1006,9 +1120,23 @@ class StaticFeedGenerationScript(StaticFeedScript):
         )
         return parser
 
+    @property
+    def library(self):
+        """Provides a predictable library to use when creating static feeds"""
+        if self.__library:
+            return self.__library
+
+        library = Library.default(self._db)
+        if library:
+            self.__library = library
+            return self.__library
+
+        raise ValueError('Cannot run script without default library')
+
     def feed_pages_by_filename(self, feed_id, full_lane, youth_lane=None,
                                prefix='', license_link=None, include_search=False,
-                               enabled_facets=None, page_size=None):
+                               enabled_facets=None, page_size=None
+    ):
         """Creates and returns static feed content.
 
         :return: A list of tuples (prospective filename, AcquistionFeed
@@ -1087,6 +1215,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             else:
                 enabled_facets = enabled_facets or self.DEFAULT_ENABLED_FACETS
                 static_facets = Facets(
+                    self.library,
                     collection=Facets.COLLECTION_FULL,
                     availability=Facets.AVAILABLE_OPEN_ACCESS,
                     order=Facets.ORDER_TITLE,
@@ -1114,11 +1243,10 @@ class StaticFeedGenerationScript(StaticFeedScript):
         previous_page = pagination.previous_page
         while (not previous_page) or previous_page.has_next_page:
             page = AcquisitionFeed.page(
-                self._db, lane.name, lane_url, lane,
-                annotator=annotator,
+                self._db, lane.name, lane_url, lane, annotator,
+                cache_type=AcquisitionFeed.NO_CACHE,
                 facets=facet,
                 pagination=pagination,
-                cache_type=AcquisitionFeed.NO_CACHE,
                 use_materialized_works=False
             )
             pages.append(page)
@@ -1128,7 +1256,7 @@ class StaticFeedGenerationScript(StaticFeedScript):
             pagination = pagination.next_page
         return pages
 
-    def load(self, feeds, uploader=None):
+    def load(self, feeds, uploader=None, bucket=None):
         """Uploads feeds via S3 or downloads them locally."""
         upload_files = list()
         for base_filename, feed_pages in feeds:
@@ -1142,7 +1270,9 @@ class StaticFeedGenerationScript(StaticFeedScript):
                 upload_files.append((filename, page))
 
         if uploader:
-            upload_files = [[f, c, uploader.feed_url(f)] for f, c in upload_files]
+            if not bucket:
+                raise ValueError('No S3 bucket provided for upload')
+            upload_files = [[f, c, uploader.feed_url(bucket, f)] for f, c in upload_files]
             representations = self._create_representations(upload_files)
             uploader.mirror_batch(representations)
         else:
@@ -1200,17 +1330,6 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
         """The feed configuration file does not have all required values."""
         pass
 
-    S3_CONFIG_KEYS = [
-        Configuration.S3_ACCESS_KEY,
-        Configuration.S3_SECRET_KEY,
-        Configuration.S3_STATIC_FEED_BUCKET
-    ]
-
-    SEARCH_CONFIG_KEYS = [
-        Configuration.URL,
-        Configuration.ELASTICSEARCH_INDEX_KEY
-    ]
-
     @classmethod
     def arg_parser(cls):
         parser = super(CustomListFeedGenerationScript, cls).arg_parser()
@@ -1262,40 +1381,38 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
             if not lanes_policy:
                 raise cls.IncompleteFeedConfigurationError("No LANES_POLICY found")
 
-            enabled_facets = C.policy(C.FACET_POLICY)
+            enabled_facets = C.policy(u'facets')
 
             if not license_link:
                 # Attempt to get the link this feed's license from the
                 # config file if it wasn't included on the command line.
-                license_link = C.link(C.LICENSE)
-
-            def confirm_configuration(configuration_dict, expected_keys, name):
-                """Ensures that the configuration is included for any fields
-                required for static feed generation.
-                """
-                missing = filter(lambda k: k not in configuration_dict, expected_keys)
-                if missing:
-                    missing = ["'%s'" % k for k in missing]
-                    missing = ", ".join(missing)
-
-                    raise cls.IncompleteFeedConfigurationError(
-                        "Incomplete %s configuration: missing %s" % (
-                        name, missing))
+                license_link = C.get('links', {}).get('license')
 
             if parsed_args.upload and not uploader:
-                s3_integration = C.integration(C.S3_INTEGRATION)
-                confirm_configuration(
-                    s3_integration, cls.S3_CONFIG_KEYS, C.S3_INTEGRATION
-                )
-                uploader = S3Uploader()
+                s3_config = C.integration('S3')
+                access_key = s3_config.get('access_key')
+                secret_key = s3_config.get('secret_key')
 
-            search_integration = C.integration(C.ELASTICSEARCH_INTEGRATION)
-            if search_integration:
-                confirm_configuration(
-                    search_integration, cls.SEARCH_CONFIG_KEYS,
-                    C.ELASTICSEARCH_INTEGRATION
+                if not (access_key and secret_key):
+                    raise cls.IncompleteFeedConfigurationError(
+                        'Incomplete S3 configuration'
+                    )
+
+                uploader = S3Uploader(access_key, secret_key)
+
+            search_config = C.integration('Elasticsearch')
+            if search_config:
+                url = search_config.get('url')
+                works_index = search_config.get(ExternalSearchIndex.WORKS_INDEX_KEY)
+
+                if not (url and works_index):
+                    raise cls.IncompleteFeedConfigurationError(
+                        'Incomplete Elasticsearch configuration'
+                    )
+
+                search_client = ExternalSearchIndex(
+                    None, url=url, works_index=works_index
                 )
-                search_client = ExternalSearchIndex()
 
         return (lanes_policy, license_link, enabled_facets, uploader,
                 search_client)
@@ -1330,10 +1447,11 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
 
         exclude_genres = list(exclude_genres.difference(genres_with_lanes))
 
-    def run(self, uploader=None, cmd_args=None):
+    def do_run(self, uploader=None, cmd_args=None):
         parsed = self.arg_parser().parse_args(cmd_args)
         prefix = unicode(parsed.prefix)
         feed_id = unicode(parsed.domain)
+        static_feed_bucket = parsed.storage_bucket
 
         # Remove configuration elements from the source config file.
         feed_config = self.get_json_config(parsed.feed_config)
@@ -1343,6 +1461,9 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
          enabled_facets,
          uploader,
          search_client) = config_details
+
+        if uploader and not static_feed_bucket:
+            raise ValueError('Cannot upload feeds without S3 bucket name')
 
         # Find the CustomList.
         list_id = unicode(parsed.list_identifier)
@@ -1362,7 +1483,7 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
             list_data_source=parsed.list_source, list_identifier=list_id,
             exclude_genres=exclude_genres
         )
-        lanelist = make_lanes(self._db, lanes_policy)
+        lanelist = make_lanes(self._db, self.library, lanes_policy)
         full_lane = self.create_base_lane(
             u"All Books", lanelist=lanelist, **lane_details)
 
@@ -1385,7 +1506,7 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
             # The feed configuration is required as an upload context
             # to ensure the temporary static_feed_bucket will be used
             # (as opposed to a locally-defined bucket).
-            self.load(feeds, uploader=uploader)
+            self.load(feeds, uploader=uploader, bucket=static_feed_bucket)
 
         if search_client:
             self.load_index(search_client, full_lane.works())
@@ -1394,8 +1515,10 @@ class CustomListFeedGenerationScript(StaticFeedGenerationScript):
         lanes = lanelist
         if lanes:
             lanes = lanes.lanes
+
         return Lane(
-            self._db, name,
+            self._db, self.library,
+            name,
             display_name=name,
             parent=None,
             sublanes=lanes,
@@ -1427,11 +1550,12 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
         )
         return parser
 
-    def run(self, uploader=None, cmd_args=None, search_index_client=None):
+    def do_run(self, uploader=None, cmd_args=None, search_index_client=None):
         parsed = self.arg_parser().parse_args(cmd_args)
         source_csv = os.path.abspath(parsed.source_csv)
         feed_id = unicode(parsed.domain)
         prefix = unicode(parsed.prefix)
+        static_feed_bucket = parsed.storage_bucket
 
         # Determine if the resulting feeds should have a search link.
         include_search = bool(parsed.search_url and parsed.search_index)
@@ -1450,7 +1574,8 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
             identifiers = [Identifier.parse_urn(self._db, unicode(urn))[0]
                            for urn in parsed.urns]
             full_lane = StaticFeedBaseLane(
-                self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+                self._db, self.library, identifiers,
+                StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
             full_query = full_lane.works()
 
@@ -1473,8 +1598,8 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
             page_size=parsed.page_size
         )
 
-        uploader = uploader or S3Uploader()
-        self.load(feeds, uploader=uploader)
+        uploader = uploader or S3Uploader.from_config(self._db)
+        self.load(feeds, uploader=uploader, bucket=static_feed_bucket)
 
         if include_search:
             search_client = ExternalSearchIndex(parsed.search_url, parsed.search_index)
@@ -1515,7 +1640,7 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
         youth_lane = None
         if all_youth:
             youth_lane = StaticFeedBaseLane(
-                self._db, all_youth, u"Children's Books"
+                self._db, self.library, all_youth, u"Children's Books"
             )
 
         if not lanes:
@@ -1523,7 +1648,8 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
             # create and return a single StaticFeedBaseLane.
             identifiers = urns_to_identifiers.values()
             single_lane = StaticFeedBaseLane(
-                self._db, identifiers, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
+                self._db, self.library, identifiers,
+                StaticFeedAnnotator.TOP_LEVEL_LANE_NAME
             )
             return single_lane, single_lane.works(), youth_lane, rejected_covers
 
@@ -1537,7 +1663,8 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
             lane_path = self.header_to_path(lane_header)
             featured = filter(lambda i: i in all_featured, identifiers)
             base_lane = StaticFeedBaseLane(
-                self._db, identifiers, lane_path[-1], featured=featured
+                self._db, self.library, identifiers, lane_path[-1],
+                featured=featured
             )
             lanes_with_works.append(base_lane)
 
@@ -1599,7 +1726,7 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
         if not parent:
             # Create a top level lane.
             return StaticFeedParentLane(
-                self._db, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME,
+                self._db, self.library, StaticFeedAnnotator.TOP_LEVEL_LANE_NAME,
                 include_all=False,
                 searchable=True,
                 invisible=True
@@ -1607,7 +1734,7 @@ class CSVFeedGenerationScript(StaticFeedGenerationScript):
         else:
             # Create a visible intermediate lane.
             return StaticFeedParentLane(
-                self._db, name,
+                self._db, self.library, name,
                 parent=parent,
                 include_all=False
             )

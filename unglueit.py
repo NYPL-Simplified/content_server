@@ -8,6 +8,10 @@ from core.opds_import import OPDSImporterWithS3Mirror
 
 class UnglueItImporter(OPDSImporterWithS3Mirror):
 
+    @classmethod
+    def collection_data(cls):
+        return dict(url=u'https://unglue.it/api/opds/epub/')
+
     def _check_for_gutenberg_first(self, url, headers, **kwargs):
         """Make a HEAD request for the given URL to make sure
         it doesn't redirect to gutenberg.org.
@@ -36,8 +40,8 @@ class UnglueItImporter(OPDSImporterWithS3Mirror):
                         )
         return Representation.simple_http_get(url, headers, **kwargs)
 
-    def __init__(self, _db, default_data_source, **kwargs):
+    def __init__(self, _db, collection, **kwargs):
         kwargs['http_get'] = self._check_for_gutenberg_first
         super(UnglueItImporter, self).__init__(
-            _db, default_data_source, **kwargs
+            _db, collection, **kwargs
         )

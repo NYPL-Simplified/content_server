@@ -11,7 +11,7 @@ from core.lane import QueryGeneratedLane
 
 class StaticFeedBaseLane(QueryGeneratedLane):
 
-    def __init__(self, _db, identifiers, lane_name, featured=None, **kwargs):
+    def __init__(self, _db, library, identifiers, lane_name, featured=None, **kwargs):
         if not identifiers:
             raise ValueError(
                 "StaticFeedBaseLane can't be created without identifiers"
@@ -21,7 +21,7 @@ class StaticFeedBaseLane(QueryGeneratedLane):
 
         full_name = display_name = lane_name
         super(StaticFeedBaseLane, self).__init__(
-            _db, full_name, display_name=display_name, **kwargs
+            _db, library, full_name, display_name=display_name, **kwargs
         )
 
     def lane_query_hook(self, qu, work_model=Work):
