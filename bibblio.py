@@ -34,6 +34,7 @@ from core.model import (
     Edition,
     ExternalIntegration,
     Identifier,
+    Library,
     LicensePool,
     LicensePoolDeliveryMechanism,
     Representation,
@@ -89,7 +90,7 @@ class BibblioAPI(object):
     @property
     def token(self):
         if (self._credential and
-            self._credential.expires <= datetime.utcnow()):
+            self._credential.expires > datetime.utcnow()):
             return self._credential.credential
 
         credential = Credential.lookup(
@@ -122,14 +123,11 @@ class BibblioAPI(object):
         if description:
             catalogue['description'] = description
 
-        catalogue = self.set_timestamp(catalogue, create=True)
         catalogue = json.dumps(catalogue)
-
         response = HTTP.post_with_timeout(
             self.CATALOGUES_ENDPOINT, catalogue,
             headers=self.default_headers,
-            allowed_response_codes=[201],
-            disallowed_response_codes=['4xx']
+            allowed_response_codes=[201]
         )
 
         catalogue = response.json()
@@ -160,8 +158,7 @@ class BibblioAPI(object):
         response = HTTP.post_with_timeout(
             self.CONTENT_ITEMS_ENDPOINT, content_item,
             headers=self.default_headers,
-            allowed_response_codes=[201],
-            disallowed_response_codes=['4xx']
+            allowed_response_codes=[201]
         )
 
         content_item = response.json()
@@ -172,6 +169,112 @@ class BibblioAPI(object):
             "New content item created for '%s': '%s'", name, content_item_id)
 
         return content_item
+
+    def delete_content_item(self, identifier):
+        content_item_id = identifier
+
+        if isinstance(identifier, Identifier):
+            if not identifier.type == Identifier.BIBBLIO_CONTENT_ITEM_ID:
+                raise TypeError('Identifier is not a Bibblio Content Item')
+
+            content_item_id = identifier.identifier
+        delete_url = self.CONTENT_ITEMS_ENDPOINT + content_item_id
+        response = HTTP.request_with_timeout(
+            'DELETE', delete_url, headers=self.default_headers,
+            allowed_response_codes=[200]
+        )
+
+        if not isinstance(identifier, basestring) and response.status_code == 200:
+            self._db.delete(identifier)
+            self.log.info("DELETED: Bibblio Content Item '%s'" % content_item_id)
+
+
+class EpubFilter(object):
+
+    """A base class for source-specific EPUB filtering. This class
+    removes front matter and distributor-specific text that can impact
+    recommendations created by the BibblioAPI.
+    """
+
+    FILLER_RE = '\s*'
+
+    ## Values for subclass definition ##
+
+    # SPINE_IDREFS lists idref values in the EPUB spine that can be
+    # completely ignored, usually because they're chock full of text
+    # specific to the distributor without any useful text to support
+    # recommendations.
+    SPINE_IDREFS = None
+
+    # FILTERED_PHRASES lists strings that are directly related to the
+    # distributor in decreasing order of specificity.
+    FILTERED_PHRASES = None
+
+    @classmethod
+    def filter_spine_idrefs(cls, spine_idrefs):
+        """Returns spine idrefs that have not been blacklisted"""
+        return [s for s in spine_idrefs if s not in cls.SPINE_IDREFS]
+
+    @classmethod
+    def phrase_regex(cls, phrase):
+        """Incorporates whitespace catchall string into a phrase"""
+        length = len(phrase)
+        if re.compile('\s{%d}' % length).match(phrase):
+            # The phrase is all whitespace. Return it as is.
+            return re.compile(phrase)
+        words = [word for word in phrase.split() if word]
+        phrase = cls.FILLER_RE.join(words)
+        return re.compile(phrase, re.IGNORECASE)
+
+    @classmethod
+    def filter(cls, text):
+        """Filters blacklisted phrases out of a text string"""
+        filtered_text = text
+        for phrase in cls.FILTERED_PHRASES:
+            phrase_re = cls.phrase_regex(phrase)
+            filtered_text = re.sub(phrase_re, ' ', filtered_text)
+        return filtered_text
+
+
+class GutenbergEpubFilter(EpubFilter):
+
+    SPINE_IDREFS = set(['pg-header'])
+
+    FILTERED_PHRASES = [
+        (
+            'This eBook is for the use of anyone anywhere (in the United'
+            ' States)? (and)? (most other parts of the world)? at no'
+            ' cost and with almost no restrictions whatsoever.'
+        ),
+        (
+            'You may copy it, give it away or re-use it under the terms'
+            ' of the Project Gutenberg License included with this eBook'
+            ' or online at'
+        ),
+        (
+            'If you are not located in the United States, you\'ll have'
+            ' to check the laws of the country where you are located'
+            ' before using this ebook.'
+        ),
+        '(http)?s?(:\/\/)?www\.gutenberg\.(org|net)(\/)?(\w|\.|-)*',
+        '(The)? Project Gutenberg Ebook (of)?',
+        '(The)? Project Gutenberg E(-)?text (of)?',
+        'Project Gutenberg License',
+        'Project Gutenberg',
+        'Gutenberg',
+    ]
+
+
+class FeedbooksEpubFilter(EpubFilter):
+
+    SPINE_IDREFS = set(['feedbooks', 'cover'])
+
+    FILTERED_PHRASES = [
+        'Note: This book is brought to you by Feedbooks',
+        'Strictly for personal use, do not use this file for commercial purposes.',
+        '(http)?s?(:\/\/)?www\.feedbooks\.com(\/)?',
+        'FeedBooks',
+    ]
 
 
 class BibblioCoverageProvider(WorkCoverageProvider):
@@ -191,6 +294,11 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         Representation.TEXT_PLAIN,
         Representation.TEXT_HTML_MEDIA_TYPE,
     ]
+
+    FILTERS_BY_DATASOURCE = {
+        DataSource.GUTENBERG : GutenbergEpubFilter,
+        DataSource.FEEDBOOKS : FeedbooksEpubFilter,
+    }
 
     def __init__(self, _db, custom_list_identifier,
                  api=None, fiction=False, languages=None,
@@ -229,14 +337,24 @@ class BibblioCoverageProvider(WorkCoverageProvider):
                 .outerjoin(CustomListEntry.customlist)\
                 .outerjoin(edition_entry, Edition.custom_list_entries)\
                 .outerjoin(edition_list, edition_entry.customlist)\
-                .filter(or_(
-                    CustomList.id==self.custom_list.id,
-                    edition_list.id==self.custom_list.id))\
+                .join(Work.license_pools)\
+                .filter(
+                    or_(
+                        CustomList.id==self.custom_list.id,
+                        edition_list.id==self.custom_list.id
+                    )
+                )\
                 .options(eagerload(Work.presentation_edition)).distinct()
+
+        library = Library.default(self._db)
+        qu = library.restrict_to_ready_deliverable_works(qu, Work)
+        qu = qu.filter(LicensePool.superceded==False)
 
         if not self.fiction:
             # Only get nonfiction. This is the default setting.
             qu = qu.filter(Work.fiction==False)
+        else:
+            qu = qu.filter(or_(Work.fiction==True, Work.fiction==None))
 
         if self.languages:
             # We only want a particular language.
@@ -270,11 +388,20 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         name = edition.title + ' by ' + edition.author
         url = self.edition_permalink(edition)
         text, data_source = self.get_full_text(work)
-        provider = dict(name=data_source.name)
+
+        if not text:
+            raise ValueError(u'No text available for upload')
+
+        data_source_name = data_source.name
+        provider = dict(name=data_source_name)
 
         content_item = dict(
             name=name, url=url, text=text, provider=provider
         )
+
+        custom_identifier = data_source.name+'|'+edition.primary_identifier.urn
+        content_item['customUniqueIdentifier'] = custom_identifier
+
         if self.catalogue_id:
             content_item['catalogueId'] = self.catalogue_id
 
@@ -311,8 +438,12 @@ class BibblioCoverageProvider(WorkCoverageProvider):
             .join(Identifier.licensed_through)\
             .filter(
                 LicensePool.work_id==work.id,
-                DeliveryMechanism.drm_scheme==DeliveryMechanism.NO_DRM)\
-            .options(
+                DeliveryMechanism.drm_scheme==DeliveryMechanism.NO_DRM,
+                or_(
+                    Representation.status_code==200,
+                    Representation.status_code==None
+                )
+            ).options(
                 eagerload(Representation.resource, Resource.data_source))
 
         text_representation = representations.filter(
@@ -323,39 +454,53 @@ class BibblioCoverageProvider(WorkCoverageProvider):
         if text_representation:
             # Get the full text if it's readily available.
             [representation] = text_representation
+            data_source = representation.resource.data_source
+
             full_text = self._html_to_text(representation.content)
-            full_text = self._shrink_text(full_text)
-            return full_text, representation.resource.data_source
+            full_text = self._shrink_text(full_text, data_source)
+            return full_text, data_source
 
         # If it's gotta be an EPUB, make sure it matches the download url.
-        epub_representation = representations.filter(
-            Representation.media_type==Representation.EPUB_MEDIA_TYPE)\
-            .limit(1).all()
+        epub_representations = representations.filter(
+            Representation.media_type==Representation.EPUB_MEDIA_TYPE).all()
 
-        if not epub_representation:
+        if not epub_representations:
             # Access to the full text isn't available.
             return None, None
 
-        [representation] = epub_representation
-        url = representation.url
-        content = representation.content
-        with EpubAccessor.open_epub(url, content=content) as (zip_file, package_path):
-            return (
-                self.extract_plaintext_from_epub(zip_file, package_path),
-                representation.resource.data_source
-            )
+        for representation in epub_representations:
+            url = representation.url
+            content = representation.content
+            data_source = representation.resource.data_source
+            try:
+                with EpubAccessor.open_epub(url, content=content) as (zip_file, package_path):
+                    return (
+                        self.extract_plaintext_from_epub(
+                            zip_file, package_path, data_source
+                        ),
+                        data_source
+                    )
+            except Exception as e:
+                continue
+
+        # None of the epub Representations yielded text, and there's
+        # nothing to be done about it. Carry on.
+        return None, None
 
     @classmethod
-    def extract_plaintext_from_epub(cls, zip_file, package_document_path):
+    def extract_plaintext_from_epub(cls, zip_file, package_document_path, data_source):
         spine, manifest = EpubAccessor.get_elements_from_package(
             zip_file, package_document_path, ['spine', 'manifest']
         )
 
+        # Get all of the items in the spine, where an ordered, TOC-esque
+        # list of textual reading content is located by identifier.
         text_basefiles = list()
         for child in spine:
             if child.tag == '{%s}itemref' % EpubAccessor.IDPF_NAMESPACE:
                 text_basefiles.append(child.get('idref'))
 
+        # Get the elements that correspond to the textual reading content.
         epub_item_elements = list()
         for child in manifest:
             if (child.tag == '{%s}item' % EpubAccessor.IDPF_NAMESPACE
@@ -376,13 +521,24 @@ class BibblioCoverageProvider(WorkCoverageProvider):
                 raw_text = cls._html_to_text(text_file.read())
                 accumulated_text += (raw_text + '\n')
 
-        return cls._shrink_text(accumulated_text)
+        return cls._shrink_text(accumulated_text, data_source)
 
     @classmethod
-    def _shrink_text(cls, text):
+    def _shrink_text(cls, text, data_source, epub_filter_class=None):
         """Removes excessive whitespace and shortens text according to
         the API requirements
         """
+        if not epub_filter_class:
+            # Try to find an EpubFilterClass object for this DataSource
+            if isinstance(data_source, DataSource):
+                data_source = data_source.name
+            epub_filter_class = cls.FILTERS_BY_DATASOURCE.get(data_source)
+
+        if epub_filter_class:
+            # Remove any unwanted text patterns that could impact
+            # recommendations.
+            text = epub_filter_class.filter(text)
+
         text = re.sub(r'(\s?\n\s+|\s+\n\s?)+', '\n', text)
         text = re.sub(r'\t{2,}', '\t', text)
         text = re.sub(r' {2,}', ' ', text)

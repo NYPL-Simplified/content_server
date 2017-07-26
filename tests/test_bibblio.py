@@ -40,6 +40,7 @@ from ..config import (
 from ..bibblio import (
     BibblioAPI,
     BibblioCoverageProvider,
+    EpubFilter,
 )
 
 
@@ -135,6 +136,78 @@ class TestBibblioAPI(DatabaseTest):
         assert result['dateCreated'] > (now.isoformat() + 'Z')
 
 
+class TestEpubFilter(object):
+
+
+    class MockEpubFilter(EpubFilter):
+
+        SPINE_IDREFS = set(['pub-data', 'cover'])
+
+        FILTERED_PHRASES = [
+            'We left school\.? (we)? (do)? lurk late',
+            'Seven (at the)+ Golden Shovel',
+            'sin',
+            'we\s*',
+            '\n        ',
+        ]
+
+    def test_filter_spine_idrefs(self):
+        result = self.MockEpubFilter.filter_spine_idrefs([])
+        eq_(0, len(result))
+
+        idrefs = ['banana', 'pub-data', 'elephant', 'chapter-3']
+        result = self.MockEpubFilter.filter_spine_idrefs(idrefs)
+        assert 'pub-data' not in result
+        eq_(3, len(result))
+
+    def test_phrase_regex(self):
+        result = self.MockEpubFilter.phrase_regex(
+            'We left school(.)? (we)? (do)? lurk late'
+        )
+
+        # The result is regex.
+        eq_(None, result.match('We left school.'))
+        assert result.match('We left school. lurk late.')
+
+        # The result is case insensitive.
+        assert result.match('WE LEFT SCHOOL. LURK LATE.')
+
+        # The result accounts for whitespace.
+        assert result.match('we left school           \nwe do lurk late')
+
+    def test_filter(self):
+        original = """The Pool Players.
+        Seven at the Golden Shovel.
+
+        We real cool. We
+        Left school. We
+
+        Lurk late. We
+        Strike straight. We
+
+        Sing sin. We
+        Thin gin. We
+
+        Jazz June. We
+        Die soon."""
+
+        # Phrases from MockEpubFilter.FILTERED_PHRASES are removed.
+        expected = ('The Pool Players.  .\n '
+            ' real cool.  .  Strike straight.  g  . '
+            ' Thin gin.  Jazz June.  Die soon.')
+        eq_(expected, self.MockEpubFilter.filter(original))
+
+        # Phrases are filtered in order.
+        class TieredFilter(EpubFilter):
+            FILTERED_PHRASES = [
+                'Left school\.',
+                'Real cool\. Left school\. Lurk late\.'
+            ]
+
+        result = TieredFilter.filter('Real cool. Left school. Lurk late.')
+        eq_('Real cool.   Lurk late.', result)
+
+
 class TestBibblioCoverageProvider(DatabaseTest):
 
     def setup(self):
@@ -166,7 +239,8 @@ class TestBibblioCoverageProvider(DatabaseTest):
         return sample_data(filename, 'bibblio')
 
     def add_representation(self, source_name, media_type, content,
-                           identifier=None):
+                           identifier=None
+    ):
         """Utility method to add representations to the local identifier"""
         identifier = identifier or self.identifier
         [pool] = identifier.licensed_through
@@ -236,7 +310,10 @@ class TestBibblioCoverageProvider(DatabaseTest):
         works = [listless, edition_listed, covered, fiction]
         for work in works:
             work.presentation_edition.data_source = source
-            [setattr(lp, 'data_source', source) for lp in work.license_pools]
+            for lp in work.license_pools:
+                [delivery_mechanism] = lp.identifier.delivery_mechanisms
+                lp.data_source = delivery_mechanism.data_source = source
+
 
         result = self.provider.items_that_need_coverage()
         # A Work that's not in the list is not included in the result.
@@ -250,13 +327,20 @@ class TestBibblioCoverageProvider(DatabaseTest):
         # A nonfiction Work that's not covered is included in the result.
         assert nonfiction in result
 
-        # When fiction is being included, the fiction edition is included.
+
+        # Unset Work.fiction for the work with its edition listed for
+        # the next test.
+        edition_listed.fiction = None
+
+        # When fiction is being included, fiction and undefined
+        # editions are included.
         self.provider.fiction = True
         result = self.provider.items_that_need_coverage()
         assert fiction in result
-        assert nonfiction in result
         assert edition_listed in result
-        # But other ignored editions are still ignored.
+        # But nonfiction is left behind.
+        assert nonfiction not in result
+        # And other ignored editions are ignored.
         assert listless not in result
         assert covered not in result
 
@@ -308,7 +392,10 @@ class TestBibblioCoverageProvider(DatabaseTest):
         )
         result = self.provider.content_item_from_work(self.work)
 
-        eq_(['name', 'provider', 'text', 'url'], sorted(result.keys()))
+        eq_(
+            ['customUniqueIdentifier', 'name', 'provider', 'text', 'url'],
+            sorted(result.keys())
+        )
         eq_('%s by %s' % (self.edition.title, self.edition.author), result.get('name'))
         eq_({ 'name' : DataSource.PLYMPTON }, result['provider'])
 
@@ -357,12 +444,38 @@ class TestBibblioCoverageProvider(DatabaseTest):
         eq_(True, 'Dostoyevsky' in text)
         eq_(DataSource.FEEDBOOKS, data_source.name)
 
+    def test_get_full_text_ignores_bad_representations(self):
+        # If there's no representation to be found, nothing is returned.
+        text, data_source = self.provider.get_full_text(self.work)
+        eq_(None, text)
+        eq_(None, data_source)
+
+        # If there isn't a representation with a 200 or None status code,
+        # nothing is returned.
+        text_rep = self.add_representation(
+            DataSource.GUTENBERG, Representation.TEXT_PLAIN, "Error"
+        )
+        text_rep.status_code = 403
+
+        text, data_source = self.provider.get_full_text(self.work)
+        eq_(None, text)
+        eq_(None, data_source)
+
+        # When the status code is corrected, there's a result.
+        text_rep.status_code = None
+        text, data_source = self.provider.get_full_text(self.work)
+        eq_("Error", text)
+        eq_(DataSource.GUTENBERG, data_source.name)
+
     def test_extract_plaintext_from_epub(self):
+        source = DataSource.lookup(self._db, DataSource.FEEDBOOKS)
         epub = self.sample_file('180.epub')
         result = None
 
         with EpubAccessor.open_epub('677.epub', content=epub) as (zip_file, package_path):
-            result = BibblioCoverageProvider.extract_plaintext_from_epub(zip_file, package_path)
+            result = BibblioCoverageProvider.extract_plaintext_from_epub(
+                zip_file, package_path, source
+            )
 
         # We get back a string.
         eq_(True, isinstance(result, str))
