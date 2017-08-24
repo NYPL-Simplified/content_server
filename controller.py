@@ -89,7 +89,7 @@ class OPDSFeedController(ContentServerController):
                 )
             lane_name = "All books from %s" % license_source.name
         else:
-            lane_name = "All books"
+            lane_name = flask.request.args.get("lane", "All books")
             license_source=None
 
         library = Library.default(self._db)
