@@ -144,6 +144,20 @@ class TestFeedController(ControllerTest):
             entries = feed['entries']
             eq_(0, len(entries))
 
+        # Verify that a lane that's from a custom list
+        # preserves the lane name in links.
+        custom_list, editions = self._customlist(foreign_identifier='my-faves')
+        SessionManager.refresh_materialized_views(self._db)
+        with self.app.test_request_context('/?size=1&lane=All+books+from+%s' % custom_list.name):
+            response = self.content_server.opds_feeds.feed()
+            feed = feedparser.parse(response.data)
+
+            [next_url] = [x['href'] for x in feed['feed']['links']
+                          if x['rel'] == 'next']
+            assert 'lane=All+books+from+%s' % custom_list.name in next_url
+            assert 'after=1' in next_url
+
+
     def test_multipage_feed(self):
         with self.app.test_request_context("/?size=1&order=title"):
             
