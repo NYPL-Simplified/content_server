@@ -60,6 +60,10 @@ class ContentServerAnnotator(VerboseAnnotator):
             # Don't show it in the OPDS feed.
             raise UnfulfillableWork()
 
+        VerboseAnnotator.annotate_work_entry(
+            work, active_license_pool, edition, identifier, feed, entry
+        )
+
     @classmethod
     def default_lane_url(cls):
         return cdn_url_for("feed", _external=True)

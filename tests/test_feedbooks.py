@@ -112,9 +112,9 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
 
         # Two requests will be made. The first will result in a 404
         # error. The second will give us an OPDS entry.
+        self.http.queue_response(404, content="Not found")
         self.http.queue_response(200, OPDSFeed.ENTRY_TYPE,
                                  content=self.sample_file("677.atom"))
-        self.http.queue_response(404, content="Not found")
 
         metadata.links = [bad_description, irrelevant_description,
                           alternate, alternate2, alternate3, alternate4]
@@ -164,12 +164,14 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         eq_([], generic_links)
 
     def test_open_access_book_modified_and_mirrored(self):
-        feed = self.sample_file("feed_with_open_access_book.atom")
-        self.http.queue_response(
-            200, OPDSFeed.ACQUISITION_FEED_TYPE,
-            content=feed
-        )
         self.metadata.lookups = { u"René Descartes" : "Descartes, Rene" }
+
+        # The requests to the various copies of the book will succeed,
+        # and the books will be mirrored.
+        self.http.queue_response(
+            200, content=self.sample_file("677.epub"),
+            media_type=Representation.EPUB_MEDIA_TYPE
+        )
 
         # The request to
         # http://covers.feedbooks.net/book/677.jpg?size=large&t=1428398185'
@@ -177,11 +179,10 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
         # mirrored.
         self.http.queue_response(404, media_type="text/plain")
 
-        # The requests to the various copies of the book will succeed,
-        # and the books will be mirrored.
+        feed = self.sample_file("feed_with_open_access_book.atom")
         self.http.queue_response(
-            200, content=self.sample_file("677.epub"),
-            media_type=Representation.EPUB_MEDIA_TYPE
+            200, OPDSFeed.ACQUISITION_FEED_TYPE,
+            content=feed
         )
 
         [edition], [pool], [work], failures = self.importer.import_from_feed(
@@ -196,7 +197,8 @@ class TestFeedbooksOPDSImporter(DatabaseTest):
 
         # Two mock HTTP requests were made.
         eq_(['http://www.feedbooks.com/book/677.epub',
-             'http://covers.feedbooks.net/book/677.jpg?size=large&t=1428398185'],
+            'http://covers.feedbooks.net/book/677.jpg?size=large&t=1428398185',
+        ],
             self.http.requests
         )
 
