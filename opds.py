@@ -36,10 +36,6 @@ class ContentServerAnnotator(VerboseAnnotator):
         if not active_license_pool.open_access:
             return
 
-        VerboseAnnotator.annotate_work_entry(
-            work, active_license_pool, edition, identifier, feed, entry
-        )
-
         rel = OPDSFeed.OPEN_ACCESS_REL
         fulfillable = False
         for resource in active_license_pool.open_access_links:
@@ -63,6 +59,10 @@ class ContentServerAnnotator(VerboseAnnotator):
             # This open-access work has no usable open-access links.
             # Don't show it in the OPDS feed.
             raise UnfulfillableWork()
+
+        VerboseAnnotator.annotate_work_entry(
+            work, active_license_pool, edition, identifier, feed, entry
+        )
 
     @classmethod
     def default_lane_url(cls):
