@@ -36,6 +36,10 @@ class ContentServerAnnotator(VerboseAnnotator):
         if not active_license_pool.open_access:
             return
 
+        VerboseAnnotator.annotate_work_entry(
+            work, active_license_pool, edition, identifier, feed, entry
+        )
+
         rel = OPDSFeed.OPEN_ACCESS_REL
         fulfillable = False
         for resource in active_license_pool.open_access_links:
