@@ -115,11 +115,17 @@ class FeedbooksOPDSImporter(OPDSImporterWithS3Mirror):
         links and (at the request of FeedBooks) ignore the other
         formats.
         """
-        if (rel==Hyperlink.GENERIC_OPDS_ACQUISITION
-            and media_type
-            and media_type.startswith(Representation.EPUB_MEDIA_TYPE)
-        ):
-            rel = Hyperlink.OPEN_ACCESS_DOWNLOAD
+        if rel==Hyperlink.GENERIC_OPDS_ACQUISITION:
+            if (media_type
+                and media_type.startswith(Representation.EPUB_MEDIA_TYPE)):
+                # Treat this generic acquisition link as an
+                # open-access link.
+                rel = Hyperlink.OPEN_ACCESS_DOWNLOAD
+            else:
+                # Feedbooks requests that we not mirror books in this format.
+                # Act as if there was no link.
+                return None
+
         return super(FeedbooksOPDSImporter, cls).make_link_data(
             rel, href, media_type, rights_uri, content
         )

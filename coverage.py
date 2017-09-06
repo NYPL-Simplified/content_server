@@ -72,24 +72,19 @@ class GutenbergEPUBCoverageProvider(IdentifierCoverageProvider):
         if isinstance(epub_path, CoverageFailure):
             return epub_path
 
-        license_pools = [
-            x for x in edition.license_pools
-            if x.data_source and x.data_source.name == DataSource.GUTENBERG
-        ]
+        license_pools = edition.license_pools
         if not license_pools:
             return CoverageFailure(
-                identifier, 'No Gutenberg license pools for %r' % edition,
-                data_source=self.data_source,
-                transient=True,
-            )
-        if len(license_pools) > 1:
-            return CoverageFailure(
-                identifier, 'Multiple Gutenberg license pools for %r' % edition,
+                identifier, 'No license pools for %r' % edition,
                 data_source=self.data_source,
                 transient=True,
             )
 
-        [license_pool] = license_pools
+        # There shouldn't be multiple license pools here, but if there
+        # are, we treat them as interchangeable, since we're not acting
+        # in the context of any particular collection
+        license_pool = license_pools[0]
+
         url = self.uploader.book_url(identifier, 'epub')
         link, new = license_pool.add_link(
             Hyperlink.OPEN_ACCESS_DOWNLOAD, url, self.data_source,
