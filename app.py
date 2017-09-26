@@ -19,13 +19,12 @@ from core.app_server import (
     URNLookupController,
     HeartbeatController,
 )
+from core.log import LogConfiguration
 
 app = Flask(__name__)
-debug = Configuration.logging_policy().get("level") == 'DEBUG'
-app.config['DEBUG'] = debug
-app.debug = debug
 babel = Babel(app)
 
+_db = None
 if os.environ.get('AUTOINITIALIZE') == 'False':
     pass
     # It's the responsibility of the importing code to set app.content_server
@@ -33,6 +32,12 @@ if os.environ.get('AUTOINITIALIZE') == 'False':
 else:
     if getattr(app, 'content_server', None) is None:
         app.content_server = ContentServer()
+        _db = app.content_server._db
+
+log_level = LogConfiguration.initialize(_db)
+debug = log_level == 'DEBUG'
+app.config['DEBUG'] = debug
+app.debug = debug
 
 def returns_problem_detail(f):
     @wraps(f)
