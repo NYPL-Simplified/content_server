@@ -1,40 +1,10 @@
 # Library Simplified Content Server
-[![Build Status](https://travis-ci.org/NYPL-Simplified/content_server.svg?branch=master)](https://travis-ci.org/NYPL-Simplified/content_server)
 
-This is the Open Access Content Server for [Library Simplified](http://www.librarysimplified.org/). The oa content server collects and parses sources and preserves metadata for open access works, serving them up in a feed with verbose OPDS entries.
+The Library Simplified Content Server is *DEPRECATED*. There is no need for anyone to install or run this software.
 
-It depends on the [LS Server Core](https://github.com/NYPL-Simplified/server_core) as a git submodule.
+The original purpose of the content server was to host open-access content and publish it through OPDS feeds. All of this functionality is now part of the [Library Simplified Circulation Manager](https://github.com/NYPL-Simplified/circulation).
 
-## Installation
-
-Thorough deployment instructions, including essential libraries for Linux systems, can be found [in the Library Simplified wiki](https://github.com/NYPL-Simplified/Simplified/wiki/Deployment-Instructions). **_If this is your first time installing a Library Simplified server, please review those instructions._**
-
-Keep in mind that the content server requires unique database names and a data directory, as detailed below.
-
-### Database
-
-Create relevant databases in Postgres:
-```sh
-$ sudo -u postgres psql
-CREATE DATABASE simplified_content_test;
-CREATE DATABASE simplified_content_dev;
-
-# Create users, unless you've already created them for another LS project
-CREATE USER simplified with password '[password]';
-CREATE USER simplified_test with password '[password]';
-
-grant all privileges on database simplified_content_dev to simplified;
-grant all privileges on database simplified_content_test to simplified_test;
-```
-
-### Data Directory
-
-Create an empty directory to be your data directory:
-```sh
-$ mkdir YOUR_DATA_DIRECTORY
-```
-
-In your content server configuration file, your specified "data_directory" should be YOUR_DATA_DIRECTORY.
+If you are running a circulation manager, you can import a variety of high quality open-access content by creating a collection based on OPDS import, and setting the import URL to `https://circulation.librarysimplified.org/OPEN/crawlable`.
 
 ## License
 
